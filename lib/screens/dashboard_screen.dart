@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -17,18 +18,63 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _userName = 'Pengguna';
   String? _userPhoto;
   bool _monitoringEnabled = true;
+  Timer? _timer;
+  DateTime _lastUpdated = DateTime.now();
 
   @override
   void initState() {
     super.initState();
     _loadUser();
+    
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final provider = context.read<AppProvider>();
       await provider.fetchUsageData();
-      if (provider.prediction == 1 && _monitoringEnabled && mounted) {
-        JedaAlertDialog.show(context);
+      setState(() => _lastUpdated = DateTime.now());
+
+      if (!_monitoringEnabled || !mounted) return;
+
+      // Cek apakah monitoring dimatikan hari ini
+      final prefs = await SharedPreferences.getInstance();
+      final disabledToday = prefs.getBool('monitoring_disabled_today') ?? false;
+      if (disabledToday) return;
+
+      final snoozeUntil = prefs.getString('snooze_until');
+      if (snoozeUntil != null) {
+        final snoozeTime = DateTime.parse(snoozeUntil);
+        if (DateTime.now().isBefore(snoozeTime)) return;
+      }
+
+      // 💡 TRIGEER ALARM OTOMATIS BERDASARKAN HASIL NAIVE BAYES
+      if (provider.prediction == 1) {
+        
+        // PASANG PELACAK: Memunculkan teks di bawah layar
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('⚠️ Memanggil Pembajak Layar dalam 3 detik...'),
+            backgroundColor: Colors.redAccent,
+            duration: Duration(seconds: 3),
+          ),
+        );
+
+        // Delay 3 detik lalu tembak Overlay!
+        Future.delayed(const Duration(seconds: 3), () async {
+          await provider.showOverlayAlert();
+        });
       }
     });
+
+    _timer = Timer.periodic(const Duration(minutes: 1), (_) async {
+      if (!mounted) return;
+      final provider = context.read<AppProvider>();
+      await provider.fetchUsageData();
+      setState(() => _lastUpdated = DateTime.now());
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadUser() async {
@@ -65,7 +111,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final Color statusColor =
         status == 'AMAN' ? const Color(0xFF4CAF50) : const Color(0xFFEF4444);
     final String statusLabel =
-        status == 'AMAN' ? 'Kondisi AMAN' : 'Kondisi BAHAYA';
+        status == 'AMAN' ? 'Status Deteksi: AMAN' : 'Status Deteksi: BAHAYA';
     final String statusDesc = status == 'AMAN'
         ? 'Penggunaanmu masih wajar.\nPertahankan!'
         : 'Penggunaanmu sudah berlebihan.\nSaatnya istirahat!';
@@ -77,7 +123,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               child: CircularProgressIndicator(color: Color(0xFFFFC107)))
           : RefreshIndicator(
               color: const Color(0xFFFFC107),
-              onRefresh: () => provider.fetchUsageData(),
+              onRefresh: () async {
+                await provider.fetchUsageData();
+                setState(() => _lastUpdated = DateTime.now());
+              },
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 child: Column(
@@ -119,8 +168,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ],
                           ),
                           GestureDetector(
-                            onTap: () =>
-                                Navigator.pushNamed(context, '/profile'),
+                            onTap: () => Navigator.pushNamed(
+                                context, '/edit-profile'),
                             child: CircleAvatar(
                               radius: 24,
                               backgroundColor: Colors.white24,
@@ -131,6 +180,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   ? const Icon(Icons.person_rounded,
                                       color: Colors.white)
                                   : null,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Last updated indicator
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Icon(Icons.sync_rounded,
+                              size: 12, color: Colors.grey[400]),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Diperbarui: ${_lastUpdated.hour.toString().padLeft(2, '0')}.${_lastUpdated.minute.toString().padLeft(2, '0')}',
+                            style: GoogleFonts.poppins(
+                              fontSize: 11,
+                              color: Colors.grey[400],
                             ),
                           ),
                         ],
@@ -173,7 +242,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                     Text(
                                       _monitoringEnabled
                                           ? 'Aktif - Mendeteksi'
-                                          : 'Istirahat / Produktif Mode',
+                                          : 'Istirahat Mode',
                                       style: GoogleFonts.poppins(
                                         fontSize: 12,
                                         color: _monitoringEnabled
@@ -212,14 +281,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             child: _monitoringEnabled
                                 ? Column(
                                     children: [
-                                      Icon(
-                                        Icons.wb_sunny_rounded,
-                                        size: 64,
-                                        color: statusColor,
-                                      ),
+                                      Icon(Icons.wb_sunny_rounded,
+                                          size: 64, color: statusColor),
                                       const SizedBox(height: 16),
                                       Text(
                                         statusLabel,
+                                        textAlign: TextAlign.center,
                                         style: GoogleFonts.poppins(
                                           fontSize: 22,
                                           fontWeight: FontWeight.w800,
@@ -238,8 +305,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       ),
                                       const SizedBox(height: 16),
                                       ClipRRect(
-                                        borderRadius:
-                                            BorderRadius.circular(8),
+                                        borderRadius: BorderRadius.circular(8),
                                         child: LinearProgressIndicator(
                                           value: prob,
                                           minHeight: 6,
@@ -249,7 +315,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
-                                        '${(prob * 100).toStringAsFixed(1)}% probabilitas kecanduan',
+                                        'Akurasi Model: 98.23% | Probabilitas: ${(prob * 100).toStringAsFixed(1)}%',
                                         style: GoogleFonts.poppins(
                                           fontSize: 11,
                                           color: Colors.grey[400],
@@ -259,11 +325,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   )
                                 : Column(
                                     children: [
-                                      Icon(
-                                        Icons.wb_sunny_rounded,
-                                        size: 64,
-                                        color: Colors.grey[300],
-                                      ),
+                                      Icon(Icons.wb_sunny_rounded,
+                                          size: 64, color: Colors.grey[300]),
                                       const SizedBox(height: 16),
                                       Text(
                                         'Monitoring Mati',
@@ -273,21 +336,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                           color: Colors.grey[400],
                                         ),
                                       ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        'Aktifkan switch di atas untuk memulai deteksi.',
-                                        textAlign: TextAlign.center,
-                                        style: GoogleFonts.poppins(
-                                          fontSize: 13,
-                                          color: Colors.grey[400],
-                                        ),
-                                      ),
                                     ],
                                   ),
                           ),
                           const SizedBox(height: 20),
 
-                          // Grid Stats
+                          // Grid Stats Penuh
                           Text(
                             'STATISTIK HARI INI',
                             style: GoogleFonts.poppins(
@@ -299,69 +353,87 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                           const SizedBox(height: 12),
 
-                          Row(
+                          GridView.count(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            crossAxisCount: 2,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                            childAspectRatio: 1.6,
                             children: [
-                              Expanded(
-                                child: _statCard(
-                                  icon: Icons.hourglass_bottom_rounded,
-                                  iconColor: const Color(0xFFFFC107),
-                                  label: 'SCREEN TIME',
-                                  value: _formatHours(data.dailyScreenTime),
-                                ),
+                              _statCard(
+                                icon: Icons.hourglass_bottom_rounded,
+                                iconColor: const Color(0xFFFFC107),
+                                label: 'SCREEN TIME',
+                                value: _formatHours(data.dailyScreenTime),
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _statCard(
-                                  icon: Icons.lock_open_rounded,
-                                  iconColor: const Color(0xFFFFC107),
-                                  label: 'UNLOCK',
-                                  value: '${data.appSessions}x',
-                                ),
+                              _statCard(
+                                icon: Icons.layers_rounded,
+                                iconColor: const Color(0xFF6366F1),
+                                label: 'SESI APLIKASI',
+                                value: '${data.appSessions.toInt()}x',
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: _statCard(
-                                  icon: Icons.nightlight_round,
-                                  iconColor: const Color(0xFFFFC107),
-                                  label: 'SESI MALAM',
-                                  value: _formatHours(data.nightUsage),
-                                ),
+                              _statCard(
+                                icon: Icons.tag_rounded,
+                                iconColor: const Color(0xFFEC4899),
+                                label: 'SOSIAL MEDIA',
+                                value: _formatHours(data.socialMediaUsage),
+                              ),
+                              _statCard(
+                                icon: Icons.sports_esports_rounded,
+                                iconColor: const Color(0xFF10B981),
+                                label: 'GAMING',
+                                value: _formatHours(data.gamingTime),
+                              ),
+                              _statCard(
+                                icon: Icons.notifications_rounded,
+                                iconColor: const Color(0xFFF59E0B),
+                                label: 'NOTIFIKASI',
+                                value: '${data.notifications.toInt()}',
+                              ),
+                              _statCard(
+                                icon: Icons.nightlight_round,
+                                iconColor: const Color(0xFF6366F1),
+                                label: 'SESI MALAM',
+                                value: _formatHours(data.nightUsage),
+                              ),
+                              _statCard(
+                                icon: Icons.grid_view_rounded,
+                                iconColor: const Color(0xFFFFC107),
+                                label: 'APP TERINSTALL',
+                                value: '${data.appsInstalled.toInt()}',
                               ),
                             ],
                           ),
                           const SizedBox(height: 20),
 
-                          // Simulasi Deteksi Bahaya
-                          GestureDetector(
-                            onTap: () => JedaAlertDialog.show(context),
-                            child: Container(
-                              width: double.infinity,
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 14),
-                              decoration: BoxDecoration(
-                                border: Border.all(
-                                  color: Colors.redAccent.withOpacity(0.4),
+                          // 💡 TOMBOL SENJATA RAHASIA DEMO SIDANG
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: () async {
+                                // Eksekusi langsung tanpa nunggu proses otomatis!
+                                await context.read<AppProvider>().showOverlayAlert();
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF1A1A2E),
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
                                 ),
-                                borderRadius: BorderRadius.circular(12),
                               ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(Icons.warning_amber_rounded,
-                                      color: Colors.redAccent, size: 18),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    'Simulasi Deteksi Bahaya',
-                                    style: GoogleFonts.poppins(
-                                      color: Colors.redAccent,
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                ],
+                              icon: const Icon(Icons.rocket_launch_rounded, color: Colors.white),
+                              label: Text(
+                                'DEMO POP-UP JEDA',
+                                style: GoogleFonts.poppins(
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                  letterSpacing: 1,
+                                ),
                               ),
                             ),
                           ),
+                          const SizedBox(height: 40),
                         ],
                       ),
                     ),
@@ -372,46 +444,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _statCard({
-    required IconData icon,
-    required Color iconColor,
-    required String label,
-    required String value,
-  }) {
+  Widget _statCard({required IconData icon, required Color iconColor, required String label, required String value}) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-          )
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)],
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: iconColor, size: 24),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            style: GoogleFonts.poppins(
-              fontSize: 9,
-              color: Colors.grey[400],
-              letterSpacing: 0.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: GoogleFonts.poppins(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: const Color(0xFF1A1A2E),
-            ),
-          ),
+          Icon(icon, color: iconColor, size: 22),
+          const Spacer(),
+          Text(value, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700, color: const Color(0xFF1A1A2E))),
+          Text(label, style: GoogleFonts.poppins(fontSize: 9, color: Colors.grey[400], letterSpacing: 0.5, fontWeight: FontWeight.w600)),
         ],
       ),
     );

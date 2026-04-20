@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
-import '../services/app_provider.dart';
+import 'package:jeda_app/services/app_provider.dart';
 
 class PermissionScreen extends StatefulWidget {
   const PermissionScreen({super.key});
@@ -16,10 +16,14 @@ class _PermissionScreenState extends State<PermissionScreen> {
   Future<void> _requestUsage() async {
     final provider = context.read<AppProvider>();
     await provider.requestPermission();
-    setState(() => _usageGranted = provider.hasPermission);
-    if (_usageGranted && mounted) {
-      Navigator.pushReplacementNamed(context, '/home');
-    }
+    
+    // Tunggu user selesai set permission di settings Android
+    await Future.delayed(const Duration(seconds: 1));
+    await provider.checkPermission();
+    
+    if (!mounted) return;
+    // Langsung ke home, permission akan dicek ulang di dashboard
+    Navigator.pushReplacementNamed(context, '/home');
   }
 
   @override

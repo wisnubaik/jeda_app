@@ -10,6 +10,9 @@ android {
     ndkVersion = "27.0.12077973"
 
     compileOptions {
+        // PERBAIKAN 1: Wajib pakai awalan 'is' dan tanda '='
+        isCoreLibraryDesugaringEnabled = true 
+        
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
@@ -21,7 +24,7 @@ android {
     defaultConfig {
         applicationId = "com.wishnotregret.berijeda"
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 32
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
@@ -31,6 +34,11 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+}
+
+dependencies {
+    // GANTI 2.0.3 MENJADI 2.1.4
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
 
 flutter {

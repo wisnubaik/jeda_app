@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:provider/provider.dart';
-import 'package:jeda_app/services/app_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class JedaAlertDialog extends StatelessWidget {
   const JedaAlertDialog({super.key});
@@ -15,6 +14,19 @@ class JedaAlertDialog extends StatelessWidget {
     );
   }
 
+  Future<void> _snooze(BuildContext context, int minutes) async {
+    final prefs = await SharedPreferences.getInstance();
+    final until = DateTime.now().add(Duration(minutes: minutes));
+    await prefs.setString('snooze_until', until.toIso8601String());
+    if (context.mounted) Navigator.pop(context);
+  }
+
+  Future<void> _disableToday(BuildContext context) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('monitoring_disabled_today', true);
+    if (context.mounted) Navigator.pop(context);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -24,6 +36,13 @@ class JedaAlertDialog extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(28),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.15),
+              blurRadius: 40,
+              offset: const Offset(0, 10),
+            ),
+          ],
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -71,25 +90,25 @@ class JedaAlertDialog extends StatelessWidget {
             _buildButton(
               label: 'Ingatkan 15 Menit Lagi',
               isPrimary: true,
-              onTap: () => Navigator.pop(context),
+              onTap: () => _snooze(context, 15),
             ),
             const SizedBox(height: 10),
             _buildButton(
               label: 'Ingatkan 30 Menit Lagi',
               isPrimary: true,
-              onTap: () => Navigator.pop(context),
+              onTap: () => _snooze(context, 30),
             ),
             const SizedBox(height: 10),
             _buildButton(
               label: 'Ingatkan 1 Jam Lagi',
               isPrimary: false,
-              onTap: () => Navigator.pop(context),
+              onTap: () => _snooze(context, 60),
             ),
             const SizedBox(height: 20),
 
             // Dismiss
             GestureDetector(
-              onTap: () => Navigator.pop(context),
+              onTap: () => _disableToday(context),
               child: RichText(
                 text: TextSpan(
                   style: GoogleFonts.poppins(
@@ -127,7 +146,7 @@ class JedaAlertDialog extends StatelessWidget {
         onPressed: onTap,
         style: ElevatedButton.styleFrom(
           backgroundColor:
-              isPrimary ? const Color(0xFFF5A623) : Colors.white,
+              isPrimary ? const Color(0xFFFFC107) : Colors.white,
           foregroundColor:
               isPrimary ? Colors.white : Colors.black87,
           padding: const EdgeInsets.symmetric(vertical: 14),

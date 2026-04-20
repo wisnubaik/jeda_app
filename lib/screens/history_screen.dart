@@ -7,41 +7,54 @@ class HistoryScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FA),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Riwayat',
-                style: GoogleFonts.poppins(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w800,
-                  color: const Color(0xFF1A1A2E),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Expanded(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.history_rounded,
-                          size: 60, color: Colors.grey[300]),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Belum ada riwayat deteksi',
-                        style: GoogleFonts.poppins(color: Colors.grey[400]),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+      backgroundColor: const Color(0xFFF0F4F8),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        title: Text(
+          'Riwayat Penggunaan',
+          style: GoogleFonts.poppins(
+            color: Colors.black87,
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
           ),
         ),
+      ),
+      body: ListView.builder(
+        padding: const EdgeInsets.all(24),
+        itemCount: 5, // Dummy count
+        itemBuilder: (context, index) {
+          return Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: Colors.orange.withOpacity(0.1),
+                  child: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+                ),
+                const SizedBox(width: 16),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Terdeteksi Bahaya',
+                      style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14),
+                    ),
+                    Text(
+                      '12 April 2024 • 14:20',
+                      style: GoogleFonts.poppins(color: Colors.grey, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }

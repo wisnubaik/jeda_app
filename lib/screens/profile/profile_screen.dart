@@ -2,6 +2,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:provider/provider.dart';
+import 'package:jeda_app/services/app_provider.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -95,8 +97,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
 
     if (confirm == true) {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('daily_log');
+      final provider = context.read<AppProvider>();
+      await provider.resetDailyData();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -203,12 +205,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     label: 'Tentang Jeda',
                     onTap: () =>
                         Navigator.pushNamed(context, '/about'),
-                  ),
-                  _menuItem(
-                    icon: Icons.delete_outline_rounded,
-                    label: 'Reset Data Harian',
-                    color: Colors.redAccent,
-                    onTap: _resetData,
                   ),
                   const SizedBox(height: 24),
                   Text(

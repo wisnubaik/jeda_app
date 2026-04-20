@@ -64,63 +64,88 @@ class MainActivity : FlutterActivity() {
         val startTime = calendar.timeInMillis
 
         val stats = usageStatsManager.queryUsageStats(
-            UsageStatsManager.INTERVAL_DAILY, startTime, endTime
+            UsageStatsManager.INTERVAL_BEST, startTime, endTime
         )
 
-        val socialPackages = listOf(
-            "instagram", "twitter", "facebook", "tiktok",
-            "snapchat", "whatsapp", "telegram", "linkedin",
-            "pinterest", "reddit", "youtube"
-        )
-
-        val gamingPackages = listOf(
-            "supercell", "king", "mojang", "garena",
-            "mobilelegends", "tencent", "roblox", "pubg"
+        val systemPackages = listOf(
+            "android", "com.android", "com.google.android",
+            "com.samsung", "com.miui", "com.xiaomi",
+            "com.huawei", "com.oppo", "com.vivo",
+            "com.wishnotregret.berijeda"
         )
 
         var totalScreenTime = 0.0
         var appSessions = 0
         var socialMediaTime = 0.0
         var gamingTime = 0.0
-        var appsInstalled = 0
+        val pm = packageManager
+        val appList = mutableListOf<Map<String, Any>>()
 
         for (stat in stats) {
             val timeMs = stat.totalTimeInForeground
             if (timeMs <= 0) continue
 
+            val pkg = stat.packageName.lowercase()
+            if (systemPackages.any { pkg.startsWith(it) }) continue
+            if (stat.lastTimeUsed < startTime) continue
+
             val timeHours = timeMs / 1000.0 / 3600.0
             totalScreenTime += timeHours
             appSessions++
-            appsInstalled++
 
-            val pkg = stat.packageName.lowercase()
-            if (socialPackages.any { pkg.contains(it) }) {
-                socialMediaTime += timeHours
-            }
-            if (gamingPackages.any { pkg.contains(it) }) {
-                gamingTime += timeHours
-            }
+            var category = -1
+            var appName = stat.packageName
+            try {
+                val appInfo = pm.getApplicationInfo(stat.packageName, 0)
+                category = appInfo.category
+                appName = pm.getApplicationLabel(appInfo).toString()
+                android.util.Log.d("JEDA", "App: $appName | category: $category")
+            } catch (e: Exception) { }
+
+            val isSocial = category == android.content.pm.ApplicationInfo.CATEGORY_SOCIAL
+            val isGame = category == android.content.pm.ApplicationInfo.CATEGORY_GAME
+
+            if (isSocial) socialMediaTime += timeHours
+            if (isGame) gamingTime += timeHours
+
+            appList.add(mapOf(
+                "name" to appName,
+                "package" to stat.packageName,
+                "duration" to timeHours,
+                "category" to category
+            ))
         }
 
-        // Night usage (jam 22.00 sampai sekarang)
+        // Night usage jam 21.00 - 00.00
         var nightUsage = 0.0
-        val now = Calendar.getInstance()
-        if (now.get(Calendar.HOUR_OF_DAY) >= 22) {
+        val nowHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        if (nowHour >= 21) {
             val nightCalendar = Calendar.getInstance()
-            nightCalendar.set(Calendar.HOUR_OF_DAY, 22)
+            nightCalendar.set(Calendar.HOUR_OF_DAY, 21)
             nightCalendar.set(Calendar.MINUTE, 0)
             nightCalendar.set(Calendar.SECOND, 0)
+            nightCalendar.set(Calendar.MILLISECOND, 0)
+
             val nightStats = usageStatsManager.queryUsageStats(
-                UsageStatsManager.INTERVAL_DAILY,
+                UsageStatsManager.INTERVAL_BEST,
                 nightCalendar.timeInMillis,
                 endTime
             )
             for (stat in nightStats) {
+                val pkg = stat.packageName.lowercase()
+                if (systemPackages.any { pkg.startsWith(it) }) continue
                 if (stat.totalTimeInForeground > 0) {
                     nightUsage += stat.totalTimeInForeground / 1000.0 / 3600.0
                 }
             }
         }
+
+        // Apps installed (hanya app yang bisa dibuka user)
+        val installedApps = pm.getInstalledApplications(0)
+        val userApps = installedApps.filter { appInfo ->
+            pm.getLaunchIntentForPackage(appInfo.packageName) != null &&
+            appInfo.packageName != packageName
+        }.size
 
         return mapOf(
             "daily_screen_time" to totalScreenTime,
@@ -129,7 +154,8 @@ class MainActivity : FlutterActivity() {
             "gaming_time" to gamingTime,
             "notifications" to 0.0,
             "night_usage" to nightUsage,
-            "apps_installed" to appsInstalled.toDouble()
+            "apps_installed" to userApps.toDouble(),
+            "app_list" to appList
         )
     }
 }

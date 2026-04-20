@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'widgets/jeda_overlay_widget.dart';
 import 'services/app_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/onboarding_screen.dart';
@@ -13,7 +13,28 @@ import 'screens/profile/edit_profile_screen.dart';
 import 'screens/profile/settings_screen.dart';
 import 'screens/profile/about_screen.dart';
 
+// ==========================================
+// MESIN OVERLAY (ANTI BLACK-BAR INFINIX)
+// ==========================================
+@pragma("vm:entry-point")
+void overlayMain() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(
+    const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      // KUNCI JAWABAN: Bungkus dengan Scaffold dan SafeArea!
+      home: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          child: JedaOverlayWidget(),
+        ),
+      ),
+    ),
+  );
+}
+
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const JedaApp());
 }
 
@@ -28,10 +49,7 @@ class JedaApp extends StatelessWidget {
         title: 'JEDA',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFF6366F1),
-          ),
-          textTheme: GoogleFonts.poppinsTextTheme(),
+          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF6366F1)),
           useMaterial3: true,
         ),
         initialRoute: '/',
