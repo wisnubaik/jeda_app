@@ -13,60 +13,201 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+// 💡 TAMBAHKAN WidgetsBindingObserver UNTUK SENSOR LAYAR AKTIF
+class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingObserver {
   String _userName = 'Pengguna';
   String? _userPhoto;
-  bool _monitoringEnabled = true;
   Timer? _timer;
   DateTime _lastUpdated = DateTime.now();
+  AppProvider? _provider;
+  bool _isWarningOpen = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this); // Nyalakan Sensor
     _loadUser();
     
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final provider = context.read<AppProvider>();
-      await provider.fetchUsageData();
+      _provider = context.read<AppProvider>();
+      await _provider!.initialize();
+      
       if (mounted) {
         setState(() => _lastUpdated = DateTime.now());
       }
 
-      if (!_monitoringEnabled || !mounted) return;
-
-      final prefs = await SharedPreferences.getInstance();
-      final disabledToday = prefs.getBool('monitoring_disabled_today') ?? false;
-      if (disabledToday) return;
-
-      final snoozeUntil = prefs.getString('snooze_until');
-      if (snoozeUntil != null) {
-        final snoozeTime = DateTime.parse(snoozeUntil);
-        if (DateTime.now().isBefore(snoozeTime)) return;
+      bool isAccEnabled = await _provider!.isAccessibilityEnabled();
+      if (!isAccEnabled && mounted) {
+        _showAccessibilityDialog();
       }
 
-      // 💡 TRIGEER ALARM & BLOKIR NATIVE OTOMATIS
-      if (provider.prediction == 1) {
-        Future.delayed(const Duration(seconds: 2), () async {
-          if (mounted) {
-            await provider.showNotificationAlert();
-            await provider.activateBlocker();
-          }
-        });
-      }
+      _checkAndShowWarning(); // Cek langsung saat buka
     });
 
     _timer = Timer.periodic(const Duration(minutes: 1), (_) async {
       if (!mounted) return;
-      final provider = context.read<AppProvider>();
-      await provider.fetchUsageData();
+      await _provider?.fetchUsageData();
       setState(() => _lastUpdated = DateTime.now());
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this); // Matikan Sensor
     _timer?.cancel();
     super.dispose();
+  }
+
+  // 💡 SENSOR: KALAU APLIKASI DIBAWA KE DEPAN, LANGSUNG CEK!
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkAndShowWarning();
+    }
+  }
+
+  void _checkAndShowWarning() async {
+    if (!mounted || _provider == null) return;
+    
+    if (_provider!.prediction == 1 && _provider!.isMonitoringEnabled && !_isWarningOpen) {
+      final prefs = await SharedPreferences.getInstance();
+      final snoozeStr = prefs.getString('snooze_until');
+      if (snoozeStr != null) {
+        final snoozeTime = DateTime.parse(snoozeStr);
+        if (DateTime.now().isBefore(snoozeTime)) return; 
+      }
+      
+      // 💡 DISINI TEMPATNYA: Bunyikan notif hanya saat pop-up mau muncul
+      _provider!.showNotificationAlert(); 
+      
+      setState(() => _isWarningOpen = true);
+      _showJedaWarningDialog();
+    }
+  }
+
+  // 💡 FUNGSI TOMBOL SNOOZE (MURNI NATIVE KOTLIN)
+  Future<void> _applySnooze(int seconds) async {
+    _isWarningOpen = false;
+    Navigator.pop(context); 
+    
+    // Titipkan angkanya ke Kotlin, lalu biarkan Kotlin yang bekerja!
+    await _provider!.applySnoozeNative(seconds);
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Jeda ditunda $seconds detik. Waktu dimulai!')),
+      );
+    }
+
+    // 💣 TIMER: Saat waktu habis, cek apakah dia lagi main IG?
+    Timer(Duration(seconds: seconds), () async {
+      if (_provider != null && _provider!.isMonitoringEnabled && _provider!.prediction == 1) {
+        
+        // Panggil fungsi Kotlin yang baru kita buat
+        await _provider!.enforceBlockIfNecessary();
+        
+        // Bunyikan notif
+        _provider!.showNotificationAlert();
+
+        if (mounted) {
+          _checkAndShowWarning(); 
+        }
+      }
+    });
+  }
+
+  void _showJedaWarningDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false, 
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(32)),
+        backgroundColor: Colors.white,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: const BoxDecoration(color: Color(0xFFF97316), shape: BoxShape.circle),
+                child: const Icon(Icons.wb_sunny_rounded, color: Colors.white, size: 48),
+              ),
+              const SizedBox(height: 24),
+              Text('SAATNYA JEDA!', style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.w900, color: const Color(0xFFF97316), letterSpacing: 0.5)),
+              const SizedBox(height: 16),
+              Text('Pola penggunaanmu sudah\nberlebihan.\nMata dan pikiranmu butuh\nistirahat.', textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[600], height: 1.5)),
+              const SizedBox(height: 32),
+              
+              // TOMBOL 5 DETIK
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFF59E0B), foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24))),
+                  onPressed: () => _applySnooze(5),
+                  child: Text('Ingatkan 5 Detik Lagi', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              
+              // TOMBOL 10 DETIK
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFF59E0B), foregroundColor: Colors.white, elevation: 0, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24))),
+                  onPressed: () => _applySnooze(10),
+                  child: Text('Ingatkan 10 Detik Lagi', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              
+              // TOMBOL 1 MENIT (60 Detik)
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFF1A1A2E), side: BorderSide(color: Colors.grey[300]!, width: 1.5), padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24))),
+                  onPressed: () => _applySnooze(60),
+                  child: Text('Ingatkan 1 Menit Lagi', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
+                ),
+              ),
+              const SizedBox(height: 28),
+              
+              GestureDetector(
+                onTap: () async {
+                  _isWarningOpen = false;
+                  Navigator.pop(context);
+                  await _provider!.setMonitoring(false);
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Monitoring dimatikan hari ini.')));
+                },
+                child: RichText(
+                  textAlign: TextAlign.center,
+                  text: TextSpan(
+                    style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[500]),
+                    children: [
+                      const TextSpan(text: 'Saya sedang produktif. '),
+                      TextSpan(text: 'Matikan\nmonitoring hari ini!', style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.grey[700], decoration: TextDecoration.underline)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showAccessibilityDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(children: [Icon(Icons.security, color: Color(0xFFEF4444)), SizedBox(width: 10), Text('Izin Diperlukan', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18))]),
+        content: const Text('Aktifkan Layanan Aksesibilitas untuk aplikasi Jeda di Pengaturan HP Anda.', style: TextStyle(fontSize: 14)),
+        actions: [TextButton(onPressed: () async { Navigator.pop(context); await context.read<AppProvider>().requestAccessibilityPermission(); }, child: const Text('BUKA PENGATURAN', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1A1A2E))))],
+      ),
+    );
   }
 
   Future<void> _loadUser() async {
@@ -99,20 +240,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final data = provider.data;
     final status = provider.status;
     final prob = provider.addictionProb;
+    final isMonitoringEnabled = provider.isMonitoringEnabled;
 
-    final Color statusColor =
-        status == 'AMAN' ? const Color(0xFF4CAF50) : const Color(0xFFEF4444);
-    final String statusLabel =
-        status == 'AMAN' ? 'Status Deteksi: AMAN' : 'Status Deteksi: BAHAYA';
-    final String statusDesc = status == 'AMAN'
-        ? 'Penggunaanmu masih wajar.\nPertahankan!'
-        : 'Penggunaanmu sudah berlebihan.\nSaatnya istirahat!';
+    final Color statusColor = status == 'AMAN' ? const Color(0xFF4CAF50) : const Color(0xFFEF4444);
+    final String statusLabel = status == 'AMAN' ? 'Status Deteksi: AMAN' : 'Status Deteksi: BAHAYA';
+    final String statusDesc = status == 'AMAN' ? 'Penggunaanmu masih wajar.\nPertahankan!' : 'Penggunaanmu sudah berlebihan.\nSaatnya istirahat!';
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       body: provider.isLoading
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFFFFC107)))
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFFFFC107)))
           : RefreshIndicator(
               color: const Color(0xFFFFC107),
               onRefresh: () async {
@@ -123,40 +260,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 child: Column(
                   children: [
-                    // Header
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.fromLTRB(24, 56, 24, 24),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFFFC107),
-                        borderRadius: BorderRadius.only(
-                          bottomLeft: Radius.circular(28),
-                          bottomRight: Radius.circular(28),
-                        ),
-                      ),
+                      decoration: const BoxDecoration(color: Color(0xFFFFC107), borderRadius: BorderRadius.only(bottomLeft: Radius.circular(28), bottomRight: Radius.circular(28))),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                _greeting(),
-                                style: GoogleFonts.poppins(
-                                  fontSize: 12,
-                                  color: Colors.white70,
-                                  fontWeight: FontWeight.w500,
-                                  letterSpacing: 1,
-                                ),
-                              ),
-                              Text(
-                                'Halo, $_userName!',
-                                style: GoogleFonts.poppins(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.white,
-                                ),
-                              ),
+                              Text(_greeting(), style: GoogleFonts.poppins(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.w500, letterSpacing: 1)),
+                              Text('Halo, $_userName!', style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.w800, color: Colors.white)),
                             ],
                           ),
                           GestureDetector(
@@ -164,19 +279,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             child: CircleAvatar(
                               radius: 24,
                               backgroundColor: Colors.white24,
-                              backgroundImage: _userPhoto != null
-                                  ? FileImage(File(_userPhoto!))
-                                  : null,
-                              child: _userPhoto == null
-                                  ? const Icon(Icons.person_rounded, color: Colors.white)
-                                  : null,
+                              backgroundImage: _userPhoto != null ? FileImage(File(_userPhoto!)) : null,
+                              child: _userPhoto == null ? const Icon(Icons.person_rounded, color: Colors.white) : null,
                             ),
                           ),
                         ],
                       ),
                     ),
-
-                    // Waktu Update
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
                       child: Row(
@@ -184,147 +293,55 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         children: [
                           Icon(Icons.sync_rounded, size: 12, color: Colors.grey[400]),
                           const SizedBox(width: 4),
-                          Text(
-                            'Diperbarui: ${_lastUpdated.hour.toString().padLeft(2, '0')}.${_lastUpdated.minute.toString().padLeft(2, '0')}',
-                            style: GoogleFonts.poppins(
-                              fontSize: 11,
-                              color: Colors.grey[400],
-                            ),
-                          ),
+                          Text('Diperbarui: ${_lastUpdated.hour.toString().padLeft(2, '0')}.${_lastUpdated.minute.toString().padLeft(2, '0')}', style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[400])),
                         ],
                       ),
                     ),
-
                     Padding(
                       padding: const EdgeInsets.all(20),
                       child: Column(
                         children: [
-                          // Master Switch
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(16),
-                              boxShadow: [
-                                BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)
-                              ],
-                            ),
+                            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)]),
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(
-                                      'Status Monitoring',
-                                      style: GoogleFonts.poppins(
-                                        fontWeight: FontWeight.w600,
-                                        color: const Color(0xFF1A1A2E),
-                                      ),
-                                    ),
-                                    Text(
-                                      _monitoringEnabled ? 'Aktif - Mendeteksi' : 'Istirahat Mode',
-                                      style: GoogleFonts.poppins(
-                                        fontSize: 12,
-                                        color: _monitoringEnabled ? const Color(0xFF4CAF50) : Colors.grey[400],
-                                      ),
-                                    ),
+                                    Text('Status Monitoring', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: const Color(0xFF1A1A2E))),
+                                    Text(isMonitoringEnabled ? 'Aktif - Mendeteksi' : 'Istirahat Mode', style: GoogleFonts.poppins(fontSize: 12, color: isMonitoringEnabled ? const Color(0xFF4CAF50) : Colors.grey[400])),
                                   ],
                                 ),
-                                Switch(
-                                  value: _monitoringEnabled,
-                                  onChanged: (v) => setState(() => _monitoringEnabled = v),
-                                  activeColor: const Color(0xFFFFC107),
-                                ),
+                                Switch(value: isMonitoringEnabled, onChanged: (v) => provider.setMonitoring(v), activeColor: const Color(0xFFFFC107)),
                               ],
                             ),
                           ),
                           const SizedBox(height: 20),
-
-                          // Status Card (Aman / Bahaya)
                           Container(
                             width: double.infinity,
                             padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(24),
-                              boxShadow: [
-                                BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)
-                              ],
-                            ),
-                            child: _monitoringEnabled
+                            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)]),
+                            child: isMonitoringEnabled
                                 ? Column(
                                     children: [
                                       Icon(Icons.wb_sunny_rounded, size: 64, color: statusColor),
                                       const SizedBox(height: 16),
-                                      Text(
-                                        statusLabel,
-                                        textAlign: TextAlign.center,
-                                        style: GoogleFonts.poppins(
-                                          fontSize: 22,
-                                          fontWeight: FontWeight.w800,
-                                          color: statusColor,
-                                        ),
-                                      ),
+                                      Text(statusLabel, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.w800, color: statusColor)),
                                       const SizedBox(height: 8),
-                                      Text(
-                                        statusDesc,
-                                        textAlign: TextAlign.center,
-                                        style: GoogleFonts.poppins(
-                                          fontSize: 13,
-                                          color: Colors.grey[500],
-                                          height: 1.5,
-                                        ),
-                                      ),
+                                      Text(statusDesc, textAlign: TextAlign.center, style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey[500], height: 1.5)),
                                       const SizedBox(height: 16),
-                                      ClipRRect(
-                                        borderRadius: BorderRadius.circular(8),
-                                        child: LinearProgressIndicator(
-                                          value: prob,
-                                          minHeight: 6,
-                                          backgroundColor: Colors.grey[200],
-                                          color: statusColor,
-                                        ),
-                                      ),
+                                      ClipRRect(borderRadius: BorderRadius.circular(8), child: LinearProgressIndicator(value: prob, minHeight: 6, backgroundColor: Colors.grey[200], color: statusColor)),
                                       const SizedBox(height: 4),
-                                      Text(
-                                        'Akurasi Model: 98.23% | Probabilitas: ${(prob * 100).toStringAsFixed(1)}%',
-                                        style: GoogleFonts.poppins(
-                                          fontSize: 11,
-                                          color: Colors.grey[400],
-                                        ),
-                                      ),
+                                      Text('Akurasi Model: 98.23% | Probabilitas: ${(prob * 100).toStringAsFixed(1)}%', style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[400])),
                                     ],
                                   )
-                                : Column(
-                                    children: [
-                                      Icon(Icons.wb_sunny_rounded, size: 64, color: Colors.grey[300]),
-                                      const SizedBox(height: 16),
-                                      Text(
-                                        'Monitoring Mati',
-                                        style: GoogleFonts.poppins(
-                                          fontSize: 22,
-                                          fontWeight: FontWeight.w800,
-                                          color: Colors.grey[400],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                                : Column(children: [Icon(Icons.wb_sunny_rounded, size: 64, color: Colors.grey[300]), const SizedBox(height: 16), Text('Monitoring Mati', style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.grey[400]))]),
                           ),
                           const SizedBox(height: 20),
-
-                          // Grid Stats
-                          Text(
-                            'STATISTIK HARI INI',
-                            style: GoogleFonts.poppins(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.grey[400],
-                              letterSpacing: 1.5,
-                            ),
-                          ),
+                          Text('STATISTIK HARI INI', style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.grey[400], letterSpacing: 1.5)),
                           const SizedBox(height: 12),
-
                           GridView.count(
                             shrinkWrap: true,
                             physics: const NeverScrollableScrollPhysics(),
@@ -333,48 +350,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             mainAxisSpacing: 12,
                             childAspectRatio: 1.6,
                             children: [
-                              _statCard(
-                                icon: Icons.hourglass_bottom_rounded,
-                                iconColor: const Color(0xFFFFC107),
-                                label: 'SCREEN TIME',
-                                value: _formatHours(data.dailyScreenTime),
-                              ),
-                              _statCard(
-                                icon: Icons.layers_rounded,
-                                iconColor: const Color(0xFF6366F1),
-                                label: 'SESI APLIKASI',
-                                value: '${data.appSessions.toInt()}x',
-                              ),
-                              _statCard(
-                                icon: Icons.tag_rounded,
-                                iconColor: const Color(0xFFEC4899),
-                                label: 'SOSIAL MEDIA',
-                                value: _formatHours(data.socialMediaUsage),
-                              ),
-                              _statCard(
-                                icon: Icons.sports_esports_rounded,
-                                iconColor: const Color(0xFF10B981),
-                                label: 'GAMING',
-                                value: _formatHours(data.gamingTime),
-                              ),
-                              _statCard(
-                                icon: Icons.notifications_rounded,
-                                iconColor: const Color(0xFFF59E0B),
-                                label: 'NOTIFIKASI',
-                                value: '${data.notifications.toInt()}',
-                              ),
-                              _statCard(
-                                icon: Icons.nightlight_round,
-                                iconColor: const Color(0xFF6366F1),
-                                label: 'SESI MALAM',
-                                value: _formatHours(data.nightUsage),
-                              ),
-                              _statCard(
-                                icon: Icons.grid_view_rounded,
-                                iconColor: const Color(0xFFFFC107),
-                                label: 'APP TERINSTALL',
-                                value: '${data.appsInstalled.toInt()}',
-                              ),
+                              _statCard(icon: Icons.hourglass_bottom_rounded, iconColor: const Color(0xFFFFC107), label: 'SCREEN TIME', value: _formatHours(data.dailyScreenTime)),
+                              _statCard(icon: Icons.layers_rounded, iconColor: const Color(0xFF6366F1), label: 'SESI APLIKASI', value: '${data.appSessions.toInt()}x'),
+                              _statCard(icon: Icons.tag_rounded, iconColor: const Color(0xFFEC4899), label: 'SOSIAL MEDIA', value: _formatHours(data.socialMediaUsage)),
+                              _statCard(icon: Icons.sports_esports_rounded, iconColor: const Color(0xFF10B981), label: 'GAMING', value: _formatHours(data.gamingTime)),
+                              _statCard(icon: Icons.notifications_rounded, iconColor: const Color(0xFFF59E0B), label: 'NOTIFIKASI', value: '${data.notifications.toInt()}'),
+                              _statCard(icon: Icons.nightlight_round, iconColor: const Color(0xFF6366F1), label: 'SESI MALAM', value: _formatHours(data.nightUsage)),
+                              _statCard(icon: Icons.grid_view_rounded, iconColor: const Color(0xFFFFC107), label: 'APP TERINSTALL', value: '${data.appsInstalled.toInt()}'),
                             ],
                           ),
                           const SizedBox(height: 40),
@@ -391,11 +373,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _statCard({required IconData icon, required Color iconColor, required String label, required String value}) {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)],
-      ),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)]),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
