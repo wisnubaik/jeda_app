@@ -5,7 +5,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/app_provider.dart';
-import '../widgets/jeda_alert_dialog.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -29,11 +28,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final provider = context.read<AppProvider>();
       await provider.fetchUsageData();
-      setState(() => _lastUpdated = DateTime.now());
+      if (mounted) {
+        setState(() => _lastUpdated = DateTime.now());
+      }
 
       if (!_monitoringEnabled || !mounted) return;
 
-      // Cek apakah monitoring dimatikan hari ini
       final prefs = await SharedPreferences.getInstance();
       final disabledToday = prefs.getBool('monitoring_disabled_today') ?? false;
       if (disabledToday) return;
@@ -44,21 +44,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (DateTime.now().isBefore(snoozeTime)) return;
       }
 
-      // 💡 TRIGEER ALARM OTOMATIS BERDASARKAN HASIL NAIVE BAYES
+      // 💡 TRIGEER ALARM & BLOKIR NATIVE OTOMATIS
       if (provider.prediction == 1) {
-        
-        // PASANG PELACAK: Memunculkan teks di bawah layar
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('⚠️ Memanggil Pembajak Layar dalam 3 detik...'),
-            backgroundColor: Colors.redAccent,
-            duration: Duration(seconds: 3),
-          ),
-        );
-
-        // Delay 3 detik lalu tembak Overlay!
-        Future.delayed(const Duration(seconds: 3), () async {
-          await provider.showOverlayAlert();
+        Future.delayed(const Duration(seconds: 2), () async {
+          if (mounted) {
+            await provider.showNotificationAlert();
+            await provider.activateBlocker();
+          }
         });
       }
     });
@@ -131,7 +123,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 child: Column(
                   children: [
-                    // Header kuning
+                    // Header
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.fromLTRB(24, 56, 24, 24),
@@ -168,8 +160,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             ],
                           ),
                           GestureDetector(
-                            onTap: () => Navigator.pushNamed(
-                                context, '/edit-profile'),
+                            onTap: () => Navigator.pushNamed(context, '/edit-profile'),
                             child: CircleAvatar(
                               radius: 24,
                               backgroundColor: Colors.white24,
@@ -177,8 +168,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   ? FileImage(File(_userPhoto!))
                                   : null,
                               child: _userPhoto == null
-                                  ? const Icon(Icons.person_rounded,
-                                      color: Colors.white)
+                                  ? const Icon(Icons.person_rounded, color: Colors.white)
                                   : null,
                             ),
                           ),
@@ -186,14 +176,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
 
-                    // Last updated indicator
+                    // Waktu Update
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
-                          Icon(Icons.sync_rounded,
-                              size: 12, color: Colors.grey[400]),
+                          Icon(Icons.sync_rounded, size: 12, color: Colors.grey[400]),
                           const SizedBox(width: 4),
                           Text(
                             'Diperbarui: ${_lastUpdated.hour.toString().padLeft(2, '0')}.${_lastUpdated.minute.toString().padLeft(2, '0')}',
@@ -212,25 +201,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         children: [
                           // Master Switch
                           Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 20, vertical: 14),
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(16),
                               boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.04),
-                                  blurRadius: 8,
-                                )
+                                BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)
                               ],
                             ),
                             child: Row(
-                              mainAxisAlignment:
-                                  MainAxisAlignment.spaceBetween,
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
                                       'Status Monitoring',
@@ -240,22 +223,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       ),
                                     ),
                                     Text(
-                                      _monitoringEnabled
-                                          ? 'Aktif - Mendeteksi'
-                                          : 'Istirahat Mode',
+                                      _monitoringEnabled ? 'Aktif - Mendeteksi' : 'Istirahat Mode',
                                       style: GoogleFonts.poppins(
                                         fontSize: 12,
-                                        color: _monitoringEnabled
-                                            ? const Color(0xFF4CAF50)
-                                            : Colors.grey[400],
+                                        color: _monitoringEnabled ? const Color(0xFF4CAF50) : Colors.grey[400],
                                       ),
                                     ),
                                   ],
                                 ),
                                 Switch(
                                   value: _monitoringEnabled,
-                                  onChanged: (v) =>
-                                      setState(() => _monitoringEnabled = v),
+                                  onChanged: (v) => setState(() => _monitoringEnabled = v),
                                   activeColor: const Color(0xFFFFC107),
                                 ),
                               ],
@@ -263,26 +241,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                           const SizedBox(height: 20),
 
-                          // Status Card
+                          // Status Card (Aman / Bahaya)
                           Container(
                             width: double.infinity,
-                            padding: const EdgeInsets.symmetric(
-                                vertical: 32, horizontal: 24),
+                            padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
                             decoration: BoxDecoration(
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(24),
                               boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.04),
-                                  blurRadius: 8,
-                                )
+                                BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)
                               ],
                             ),
                             child: _monitoringEnabled
                                 ? Column(
                                     children: [
-                                      Icon(Icons.wb_sunny_rounded,
-                                          size: 64, color: statusColor),
+                                      Icon(Icons.wb_sunny_rounded, size: 64, color: statusColor),
                                       const SizedBox(height: 16),
                                       Text(
                                         statusLabel,
@@ -325,8 +298,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   )
                                 : Column(
                                     children: [
-                                      Icon(Icons.wb_sunny_rounded,
-                                          size: 64, color: Colors.grey[300]),
+                                      Icon(Icons.wb_sunny_rounded, size: 64, color: Colors.grey[300]),
                                       const SizedBox(height: 16),
                                       Text(
                                         'Monitoring Mati',
@@ -341,7 +313,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                           const SizedBox(height: 20),
 
-                          // Grid Stats Penuh
+                          // Grid Stats
                           Text(
                             'STATISTIK HARI INI',
                             style: GoogleFonts.poppins(
@@ -404,34 +376,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 value: '${data.appsInstalled.toInt()}',
                               ),
                             ],
-                          ),
-                          const SizedBox(height: 20),
-
-                          // 💡 TOMBOL SENJATA RAHASIA DEMO SIDANG
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton.icon(
-                              onPressed: () async {
-                                // Eksekusi langsung tanpa nunggu proses otomatis!
-                                await context.read<AppProvider>().showOverlayAlert();
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF1A1A2E),
-                                padding: const EdgeInsets.symmetric(vertical: 16),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                              ),
-                              icon: const Icon(Icons.rocket_launch_rounded, color: Colors.white),
-                              label: Text(
-                                'DEMO POP-UP JEDA',
-                                style: GoogleFonts.poppins(
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
-                                  letterSpacing: 1,
-                                ),
-                              ),
-                            ),
                           ),
                           const SizedBox(height: 40),
                         ],

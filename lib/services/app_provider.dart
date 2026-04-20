@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart'; // WAJIB UNTUK JALUR NATIVE
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:flutter_overlay_window/flutter_overlay_window.dart' as overlay;
 import '../models/usage_data.dart';
 import '../models/naive_bayes_model.dart';
 import '../services/usage_stats_service.dart';
@@ -14,6 +14,11 @@ class AppProvider extends ChangeNotifier {
   bool _hasPermission = false;
 
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
+  
+  // ==========================================
+  // JALUR KOMUNIKASI KE KOTLIN (NATIVE)
+  // ==========================================
+  static const platform = MethodChannel('com.wishnotregret.berijeda/blocker');
 
   UsageData get data => _data;
   int get prediction => _prediction;
@@ -23,36 +28,32 @@ class AppProvider extends ChangeNotifier {
   String get status => _prediction == 0 ? 'AMAN' : 'BAHAYA';
 
   // ==========================================
-  // FUNGSI ALARM (DIPISAH BIAR GAK SALING JEGAL)
+  // FUNGSI 1: AKTIFKAN PEMBLOKIR (NATIVE)
   // ==========================================
-  Future<void> showOverlayAlert() async {
-    
-    // --- JALUR 1: EKSEKUSI OVERLAY PEMBAJAK LAYAR ---
+  Future<void> activateBlocker() async {
     try {
-      final hasPermission = await overlay.FlutterOverlayWindow.isPermissionGranted();
-      if (hasPermission) {
-        await overlay.FlutterOverlayWindow.closeOverlay(); // Bersihkan yang lama
-        
-        // Panggil Pop-Up Center dengan Ukuran Pasti (Mencegah Silent Fail Infinix)
-        await overlay.FlutterOverlayWindow.showOverlay(
-          enableDrag: false, // Wajib false agar ukuran stabil di tengah layar
-          flag: overlay.OverlayFlag.defaultFlag,
-          visibility: overlay.NotificationVisibility.visibilityPublic,
-          alignment: overlay.OverlayAlignment.center,
-          height: 850, // Angka pasti
-          width: 850,  // Angka pasti
-          overlayTitle: 'JEDA',
-          overlayContent: 'Waktunya istirahat',
-        );
-        debugPrint("🔥 OVERLAY SUKSES TERPANGGIL!");
-      } else {
-        await overlay.FlutterOverlayWindow.requestPermission();
-      }
-    } catch (e) {
-      debugPrint("❌ OVERLAY GAGAL: $e");
+      await platform.invokeMethod('setBlockingStatus', {'status': true});
+      debugPrint("🔥 BLOKIR NATIVE AKTIF!");
+    } on PlatformException catch (e) {
+      debugPrint("❌ Gagal mengaktifkan blokir: ${e.message}");
     }
+  }
 
-    // --- JALUR 2: EKSEKUSI NOTIFIKASI BERSUARA ---
+  // ==========================================
+  // FUNGSI 2: MINTA IZIN AKSESIBILITAS KE USER
+  // ==========================================
+  Future<void> requestAccessibilityPermission() async {
+    try {
+      await platform.invokeMethod('openAccessibilitySettings');
+    } on PlatformException catch (e) {
+      debugPrint("❌ Gagal buka setting: ${e.message}");
+    }
+  }
+
+  // ==========================================
+  // FUNGSI 3: NOTIFIKASI SUARA PERINGATAN
+  // ==========================================
+  Future<void> showNotificationAlert() async {
     try {
       const AndroidInitializationSettings initSettingsAndroid =
           AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -62,11 +63,11 @@ class AppProvider extends ChangeNotifier {
 
       const AndroidNotificationDetails androidDetails =
           AndroidNotificationDetails(
-        'jeda_suara_final_v1', // KUNCI SUARA MUNCUL: ID BARU!
+        'jeda_suara_final_v1', 
         'Alarm Jeda Keras',
         importance: Importance.max,
         priority: Priority.high,
-        playSound: true, // Suara dijamin keluar sekarang
+        playSound: true, 
       );
 
       const NotificationDetails platformSpecifics =
@@ -75,7 +76,7 @@ class AppProvider extends ChangeNotifier {
       await _notificationsPlugin.show(
         999,
         'SAATNYA JEDA! ⚠️',
-        'Pola penggunaan berlebihan. Segera istirahat!',
+        'Pola penggunaan berlebihan. Layar akan diblokir!',
         platformSpecifics,
       );
       debugPrint("🔔 NOTIFIKASI SUKSES TERPANGGIL!");
@@ -117,14 +118,15 @@ class AppProvider extends ChangeNotifier {
       appsInstalled: 42,      
     );
 
-    // 💡 LOGIKA PREDIKSI & TRIGGER OTOMATIS
+    // 💡 LOGIKA PREDIKSI & TRIGGER BLOKIR OTOMATIS
     if (_data.dailyScreenTime > 5.0) {
       _prediction = 1;
       _addictionProb = 0.88; 
       
-      // TRIGGER OTOMATIS: Beri jeda 2 detik agar UI sempat memuat, lalu tembak!
+      // TRIGGER OTOMATIS: Bunyikan notif dan nyalakan mesin blokir Native!
       Future.delayed(const Duration(seconds: 2), () {
-        showOverlayAlert();
+        showNotificationAlert();
+        activateBlocker();
       });
       
     } else {
@@ -165,14 +167,13 @@ class AppProvider extends ChangeNotifier {
     if (nightUsage != null) _data.nightUsage = nightUsage;
     if (appsInstalled != null) _data.appsInstalled = appsInstalled;
     
-    // 💡 LOGIKA PREDIKSI & TRIGGER OTOMATIS (Sama seperti fetchUsageData)
     if (_data.dailyScreenTime > 5.0) {
       _prediction = 1;
       _addictionProb = 0.88;
       
-      // TRIGGER OTOMATIS: Tembak alarm jika data di-update manual menjadi bahaya
       Future.delayed(const Duration(seconds: 2), () {
-        showOverlayAlert();
+        showNotificationAlert();
+        activateBlocker();
       });
       
     } else {
