@@ -15,10 +15,7 @@ dependencies:
   google_fonts: ^6.1.0
   image_picker: ^1.0.7
   flutter_overlay_window: ^0.5.0
-  
-  # KITA PAKE INI YANG TERBUKTI BISA
-  usage_stats: ^1.1.0 
-  
+  usage_stats: ^1.1.0
   notification_listener_service: ^0.3.5
   permission_handler: ^12.0.1
   flutter_local_notifications: ^19.5.0
@@ -31,3 +28,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # ✅ FIX: Daftarkan file asset model Naive Bayes
+  assets:
+    - assets/model_jeda.json

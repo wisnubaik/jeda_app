@@ -16,11 +16,12 @@ class _PermissionScreenState extends State<PermissionScreen> {
   Future<void> _requestUsage() async {
     final provider = context.read<AppProvider>();
     await provider.requestPermission();
-    
+    await provider.requestOverlayPermission();
+
     // Tunggu user selesai set permission di settings Android
     await Future.delayed(const Duration(seconds: 1));
     await provider.checkPermission();
-    
+
     if (!mounted) return;
     // Langsung ke home, permission akan dicek ulang di dashboard
     Navigator.pushReplacementNamed(context, '/home');

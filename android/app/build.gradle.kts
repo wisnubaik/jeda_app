@@ -6,13 +6,11 @@ plugins {
 
 android {
     namespace = "com.wishnotregret.berijeda"
-    compileSdk = 35 // NAIKKAN KE 35 SESUAI PERMINTAAN PLUGIN
+    compileSdk = 36
     ndkVersion = "27.0.12077973"
 
     compileOptions {
-        // PERBAIKAN 1: Wajib pakai awalan 'is' dan tanda '='
-        isCoreLibraryDesugaringEnabled = false 
-        
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
@@ -23,9 +21,8 @@ android {
 
     defaultConfig {
         applicationId = "com.wishnotregret.berijeda"
-        // GANTI INI: Pakai angka 21 langsung
-        minSdk = 21 
-        targetSdk = 35 
+        minSdk = flutter.minSdkVersion
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
@@ -38,8 +35,7 @@ android {
 }
 
 dependencies {
-
-   // coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:1.1.5")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
 
 flutter {

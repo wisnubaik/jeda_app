@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'widgets/jeda_overlay_widget.dart';
 import 'services/app_provider.dart';
@@ -19,22 +20,28 @@ import 'screens/profile/about_screen.dart';
 @pragma("vm:entry-point")
 void overlayMain() {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // ✅ FIX: Matikan fetch font saat runtime di overlay juga
+  GoogleFonts.config.allowRuntimeFetching = false;
+
   runApp(
     const MaterialApp(
       debugShowCheckedModeBanner: false,
-      // KUNCI JAWABAN: Bungkus dengan Scaffold dan SafeArea!
       home: Scaffold(
         backgroundColor: Colors.transparent,
-        body: SafeArea(
-          child: JedaOverlayWidget(),
-        ),
+        body: SafeArea(child: JedaOverlayWidget()),
       ),
     ),
   );
 }
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // ✅ FIX: Matikan pengunduhan font dari internet agar tidak error saat offline
+  // Font akan otomatis fallback ke font sistem jika belum di-cache
+  GoogleFonts.config.allowRuntimeFetching = false;
+
   runApp(const JedaApp());
 }
 
