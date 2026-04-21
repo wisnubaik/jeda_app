@@ -234,7 +234,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     return '${minutes}m';
   }
 
-  @override
+@override
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
     final data = provider.data;
@@ -300,6 +300,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                     Padding(
                       padding: const EdgeInsets.all(20),
                       child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start, // Pastikan rata kiri
                         children: [
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
@@ -339,24 +340,33 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                                   )
                                 : Column(children: [Icon(Icons.wb_sunny_rounded, size: 64, color: Colors.grey[300]), const SizedBox(height: 16), Text('Monitoring Mati', style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.grey[400]))]),
                           ),
-                          const SizedBox(height: 20),
-                          Text('STATISTIK HARI INI', style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.grey[400], letterSpacing: 1.5)),
-                          const SizedBox(height: 12),
-                          GridView.count(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            crossAxisCount: 2,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
-                            childAspectRatio: 1.6,
+                          const SizedBox(height: 30),
+                          
+                          // BAGIAN STATISTIK HARI INI
+                          Text('STATISTIK HARI INI', style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.grey[400], letterSpacing: 1.5)),
+                          const SizedBox(height: 16),
+                          
+                          // Menggunakan Column dan _buildWideStatCard untuk tampilan memanjang 3 baris
+                          Column(
                             children: [
-                              _statCard(icon: Icons.hourglass_bottom_rounded, iconColor: const Color(0xFFFFC107), label: 'SCREEN TIME', value: _formatHours(data.dailyScreenTime)),
-                              _statCard(icon: Icons.layers_rounded, iconColor: const Color(0xFF6366F1), label: 'SESI APLIKASI', value: '${data.appSessions.toInt()}x'),
-                              _statCard(icon: Icons.tag_rounded, iconColor: const Color(0xFFEC4899), label: 'SOSIAL MEDIA', value: _formatHours(data.socialMediaUsage)),
-                              _statCard(icon: Icons.sports_esports_rounded, iconColor: const Color(0xFF10B981), label: 'GAMING', value: _formatHours(data.gamingTime)),
-                              _statCard(icon: Icons.notifications_rounded, iconColor: const Color(0xFFF59E0B), label: 'NOTIFIKASI', value: '${data.notifications.toInt()}'),
-                              _statCard(icon: Icons.nightlight_round, iconColor: const Color(0xFF6366F1), label: 'SESI MALAM', value: _formatHours(data.nightUsage)),
-                              _statCard(icon: Icons.grid_view_rounded, iconColor: const Color(0xFFFFC107), label: 'APP TERINSTALL', value: '${data.appsInstalled.toInt()}'),
+                              _buildWideStatCard(
+                                icon: Icons.hourglass_bottom_rounded,
+                                iconColor: const Color(0xFFFFC107),
+                                label: 'SCREEN TIME',
+                                value: _formatHours(data.dailyScreenTime),
+                              ),
+                              _buildWideStatCard(
+                                icon: Icons.lock_open_rounded,
+                                iconColor: const Color(0xFF6366F1),
+                                label: 'FREKUENSI DIBUKA',
+                                value: '${data.appSessions.toInt()}x',
+                              ),
+                              _buildWideStatCard(
+                                icon: Icons.notifications_active_rounded,
+                                iconColor: const Color(0xFFEC4899),
+                                label: 'TOTAL NOTIFIKASI',
+                                value: '${data.notifications.toInt()}',
+                              ),
                             ],
                           ),
                           const SizedBox(height: 40),
@@ -370,17 +380,63 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     );
   }
 
-  Widget _statCard({required IconData icon, required Color iconColor, required String label, required String value}) {
+  // WIDGET BARU PENGGANTI _statCard LAMA
+  Widget _buildWideStatCard({
+    required IconData icon,
+    required Color iconColor,
+    required String label,
+    required String value,
+  }) {
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8)]),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
+          )
+        ],
+      ),
+      child: Row(
         children: [
-          Icon(icon, color: iconColor, size: 22),
-          const Spacer(),
-          Text(value, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700, color: const Color(0xFF1A1A2E))),
-          Text(label, style: GoogleFonts.poppins(fontSize: 9, color: Colors.grey[400], letterSpacing: 0.5, fontWeight: FontWeight.w600)),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: iconColor.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(icon, color: iconColor, size: 30),
+          ),
+          const SizedBox(width: 20),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value,
+                  style: GoogleFonts.poppins(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF1A1A2E),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  style: GoogleFonts.poppins(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[400],
+                    letterSpacing: 1.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

@@ -1,19 +1,24 @@
 package com.wishnotregret.berijeda
 
-import io.flutter.embedding.android.FlutterActivity
-import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.plugin.common.MethodChannel
+import android.content.Context
 import android.content.Intent
 import android.provider.Settings
-import android.content.Context
 import android.util.Log
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
+// Kunci penyelesaian konflik nama: Kita jadikan namanya FlutterResult
+import io.flutter.plugin.common.MethodChannel.Result as FlutterResult
 
 class MainActivity: FlutterActivity() {
     private val CHANNEL = "com.wishnotregret.berijeda/blocker"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+        
+        // Sekarang Kotlin tahu persis ini Result milik Flutter, bukan milik Kotlin
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call: MethodCall, result: FlutterResult ->
             when (call.method) {
                 "setBlockingStatus" -> {
                     val status = call.argument<Boolean>("status") ?: false
@@ -30,7 +35,6 @@ class MainActivity: FlutterActivity() {
                     Log.d("JedaBlocker", "Snooze aktif selama $seconds detik")
                     result.success(null)
                 }
-                // 💡 INI KODE BARU: Cek sebelum melempar ke layar
                 "enforceBlockIfNecessary" -> {
                     val prefs = applicationContext.getSharedPreferences("JedaPrefs", Context.MODE_PRIVATE)
                     val isBlockingActive = prefs.getBoolean("isBlockingActive", false)

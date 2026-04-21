@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:usage_stats/usage_stats.dart'; // MURNI PAKE USAGE STATS
 import '../models/usage_data.dart';
 import '../models/naive_bayes_model.dart';
 import '../services/usage_stats_service.dart';
@@ -25,7 +26,6 @@ class AppProvider extends ChangeNotifier {
   bool get isMonitoringEnabled => _isMonitoringEnabled;
   String get status => _prediction == 0 ? 'AMAN' : 'BAHAYA';
 
-  // --- FITUR BARU: NATIVE BLOCKER & SAKLAR ---
   Future<void> setMonitoring(bool value) async {
     _isMonitoringEnabled = value;
     notifyListeners();
@@ -73,7 +73,6 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  // --- FUNGSI KIRIM SNOOZE DETIK KE KOTLIN ---
   Future<void> applySnoozeNative(int seconds) async {
     try {
       await platform.invokeMethod('setSnooze', {'seconds': seconds});
@@ -91,10 +90,9 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  // --- KEMBALIKAN FUNGSI LAMA YANG SEMPAT TERHAPUS ---
   Future<void> requestPermission() async {
-    await UsageStatsService.requestPermission();
-    _hasPermission = await UsageStatsService.isPermissionGranted();
+    await UsageStats.grantUsagePermission();
+    _hasPermission = (await UsageStats.checkUsagePermission()) ?? false;
     if (_hasPermission) {
       await fetchUsageData();
     }
@@ -102,7 +100,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> checkPermission() async {
-    _hasPermission = await UsageStatsService.isPermissionGranted();
+    _hasPermission = (await UsageStats.checkUsagePermission()) ?? false;
     notifyListeners();
   }
 
@@ -113,6 +111,7 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // FUNGSI INI DIKEMBALIKAN AGAR INPUT SCREEN TIDAK ERROR
   void updateData({
     double? screenTime,
     int? appSessions,
@@ -150,8 +149,12 @@ class AppProvider extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
     _model = await NaiveBayesModel.getInstance();
-    _hasPermission = await UsageStatsService.isPermissionGranted();
-    await fetchUsageData();
+    _hasPermission = (await UsageStats.checkUsagePermission()) ?? false;
+    
+    if (_hasPermission) {
+      await fetchUsageData();
+    }
+    
     _isLoading = false;
     notifyListeners();
   }
@@ -160,29 +163,45 @@ class AppProvider extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
 
-    _data = UsageData(
-      dailyScreenTime: 7.5,
-      appSessions: 85,
-      socialMediaUsage: 4.5,
-      gamingTime: 3.0,
-      notifications: 150,
-      nightUsage: 2.5,
-      appsInstalled: 42,
-    );
+    try {
+      DateTime endDate = DateTime.now();
+      DateTime startDate = DateTime(endDate.year, endDate.month, endDate.day);
 
-    if (_data.dailyScreenTime > 5.0) {
-      _prediction = 1;
-      _addictionProb = 0.88;
+      List<UsageInfo> usageList = await UsageStats.queryUsageStats(startDate, endDate);
       
-      if (_isMonitoringEnabled) {
-        Future.delayed(const Duration(seconds: 2), () {
-          _syncBlockerToNative(true);
-        });
+      double totalHours = 0.0;
+      for (var info in usageList) {
+        double timeInMs = double.tryParse(info.totalTimeInForeground ?? '0') ?? 0;
+        totalHours += (timeInMs / 1000 / 60 / 60); 
       }
-    } else {
-      _prediction = 0;
-      _addictionProb = 0.15;
-      _syncBlockerToNative(false);
+
+      _data = UsageData(
+        dailyScreenTime: totalHours,
+        appSessions: usageList.length, 
+        socialMediaUsage: 0.0, 
+        gamingTime: 0.0,
+        notifications: 0, 
+        nightUsage: 0.0,
+        appsInstalled: 0,
+      );
+
+      if (_data.dailyScreenTime > 5.0) {
+        _prediction = 1;
+        _addictionProb = 0.88;
+        
+        if (_isMonitoringEnabled) {
+          Future.delayed(const Duration(seconds: 2), () {
+            _syncBlockerToNative(true);
+          });
+        }
+      } else {
+        _prediction = 0;
+        _addictionProb = 0.15;
+        _syncBlockerToNative(false);
+      }
+
+    } catch (e) {
+      debugPrint("❌ Gagal menarik data UsageStats: $e");
     }
 
     _isLoading = false;
