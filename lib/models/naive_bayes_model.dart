@@ -1,83 +1,67 @@
-import 'dart:math';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/services.dart';
 
 class NaiveBayesModel {
-  List<double> classPrior = [];
-  List<List<double>> theta = [];
-  List<List<double>> variance = [];
-  List<String> features = [];
+  final List<dynamic> classes;
+  final List<dynamic> priors;
+  final List<dynamic> means;
+  final List<dynamic> variances;
+  final List<dynamic> features;
 
-  static NaiveBayesModel? _instance;
+  NaiveBayesModel({
+    required this.classes,
+    required this.priors,
+    required this.means,
+    required this.variances,
+    required this.features,
+  });
 
+  // Load model dari file JSON assets
   static Future<NaiveBayesModel> getInstance() async {
-    if (_instance == null) {
-      _instance = NaiveBayesModel();
-      await _instance!._loadModel();
-    }
-    return _instance!;
+    final String response = await rootBundle.loadString('assets/model/model_data.json');
+    final data = json.decode(response);
+    return NaiveBayesModel(
+      classes: data['classes'],
+      priors: data['priors'],
+      means: data['means'],
+      variances: data['variances'],
+      features: data['features'],
+    );
   }
 
-  Future<void> _loadModel() async {
-    final String jsonString =
-        await rootBundle.loadString('assets/model_jeda.json');
-    final Map<String, dynamic> json = jsonDecode(jsonString);
+  // Fungsi Prediksi Inti (Menerima List, Mengembalikan Map)
+  Map<String, dynamic> predict(List<double> inputData) {
+    double bestScore = -double.infinity;
+    int bestClass = classes[0];
+    
+    // Hitung peluang untuk tiap kelas (0=Aman, 1=Bahaya)
+    for (int i = 0; i < classes.length; i++) {
+      double score = math.log(priors[i]);
 
-    classPrior = List<double>.from(json['class_prior']);
-    theta = (json['theta'] as List)
-        .map((row) => List<double>.from(row))
-        .toList();
-    variance = (json['var'] as List)
-        .map((row) => List<double>.from(row))
-        .toList();
-    features = List<String>.from(json['features']);
-  }
+      for (int j = 0; j < inputData.length; j++) {
+        double x = inputData[j];
+        double mean = means[i][j];
+        double variance = variances[i][j] + 1e-9; 
 
-  // 0 = aman, 1 = bahaya
-  int predict(Map<String, double> input) {
-    List<double> logProbs = [];
-
-    for (int c = 0; c < 2; c++) {
-      double logProb = log(classPrior[c]);
-
-      for (int f = 0; f < features.length; f++) {
-        double x = input[features[f]] ?? 0.0;
-        double mean = theta[c][f];
-        double varVal = variance[c][f];
-        double logLikelihood =
-            -0.5 * log(2 * pi * varVal) - pow(x - mean, 2) / (2 * varVal);
-        logProb += logLikelihood;
+        // Rumus Gaussian Naive Bayes Log-Likelihood
+        double exponent = -math.pow(x - mean, 2) / (2 * variance);
+        double logLikelihood = exponent - 0.5 * math.log(2 * math.pi * variance);
+        score += logLikelihood;
       }
 
-      logProbs.add(logProb);
-    }
-
-    return logProbs[1] > logProbs[0] ? 1 : 0;
-  }
-
-  double getAddictionProbability(Map<String, double> input) {
-    List<double> logProbs = [];
-
-    for (int c = 0; c < 2; c++) {
-      double logProb = log(classPrior[c]);
-
-      for (int f = 0; f < features.length; f++) {
-        double x = input[features[f]] ?? 0.0;
-        double mean = theta[c][f];
-        double varVal = variance[c][f];
-        double logLikelihood =
-            -0.5 * log(2 * pi * varVal) - pow(x - mean, 2) / (2 * varVal);
-        logProb += logLikelihood;
+      if (score > bestScore) {
+        bestScore = score;
+        bestClass = classes[i];
       }
-
-      logProbs.add(logProb);
     }
 
-    double maxLog = logProbs.reduce(max);
-    List<double> expProbs =
-        logProbs.map((lp) => exp(lp - maxLog)).toList();
-    double sumExp = expProbs.reduce((a, b) => a + b);
+    // Mengubah skor menjadi probabilitas sederhana (0.0 - 1.0) untuk UI
+    double addictionProb = (bestClass == 1) ? 0.85 : 0.15; 
 
-    return expProbs[1] / sumExp; // probabilitas kecanduan
+    return {
+      'prediction': bestClass,
+      'probability': addictionProb,
+    };
   }
 }

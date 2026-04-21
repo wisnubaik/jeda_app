@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
-
-// Pastikan 3 baris import ini ada dan benar
-import 'dashboard_screen.dart'; 
+import 'package:provider/provider.dart';
+import 'package:usage_stats/usage_stats.dart';
+import 'package:notification_listener_service/notification_listener_service.dart';
+import '../services/app_provider.dart';
+import 'dashboard_screen.dart';
 import 'history/history_screen.dart';
 import 'profile/profile_screen.dart';
 
@@ -15,54 +16,91 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
+  bool _isDialogShowing = false;
 
-    final List<Widget> _screens = [
-    const DashboardScreen(),
-    const HistoryScreen(),
-    const ProfileScreen(),
-  ];
-
+  final List<Widget> _screens = [const DashboardScreen(), const HistoryScreen(), const ProfileScreen()];
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: _screens[_selectedIndex],
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 15,
-              offset: const Offset(0, -2),
-            ),
-          ],
-        ),
-        child: BottomNavigationBar(
-          currentIndex: _selectedIndex,
-          onTap: (index) => setState(() => _selectedIndex = index),
-          backgroundColor: Colors.white,
-          selectedItemColor: Colors.orange,
-          unselectedItemColor: Colors.grey[400],
-          showSelectedLabels: true,
-          showUnselectedLabels: true,
-          type: BottomNavigationBarType.fixed,
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.dashboard_rounded),
-              label: 'Dashboard',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.history_rounded),
-              label: 'Riwayat',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.person_rounded),
-              label: 'Profil',
-            ),
-          ],
-        ),
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _logicPengecekanIzin());
+  }
+
+  Future<void> _logicPengecekanIzin() async {
+    if (_isDialogShowing) return;
+
+    final p = context.read<AppProvider>();
+
+    // 1. Cek Usage Stats
+    bool hasUsage = await UsageStats.checkUsagePermission() ?? false;
+    if (!hasUsage) {
+      await _tampilkanDialog(
+        "Izin Akses Data",
+        "Jeda butuh izin ini untuk menghitung Screen Time kamu secara akurat.",
+        () => p.openUsageSettings()
+      );
+      return; 
+    }
+
+    // 2. Cek Aksesibilitas
+    bool hasAccess = await p.isAccessibilityEnabled();
+    if (!hasAccess) {
+      await _tampilkanDialog(
+        "Izin Aksesibilitas",
+        "Dibutuhkan agar fitur pemblokiran Jeda bisa bekerja.",
+        () => p.openAccessibilitySettings()
+      );
+      return;
+    }
+
+    // 3. Cek Notifikasi
+    bool hasNotif = await NotificationListenerService.isPermissionGranted();
+    if (!hasNotif) {
+      await _tampilkanDialog(
+        "Akses Notifikasi",
+        "Dibutuhkan untuk menghitung jumlah notifikasi masuk sesuai standar SAS-SV.",
+        () => p.openNotificationSettings()
+      );
+    }
+  }
+
+  Future<void> _tampilkanDialog(String t, String d, VoidCallback action) async {
+    setState(() => _isDialogShowing = true);
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (c) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        title: Text(t, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.orange)),
+        content: Text(d),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c), child: const Text("Nanti")),
+          ElevatedButton(
+            onPressed: () { Navigator.pop(c); action(); },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            child: const Text("Buka Pengaturan"),
+          ),
+        ],
       ),
     );
+    setState(() => _isDialogShowing = false);
   }
+
+  @override
+Widget build(BuildContext context) {
+  return Scaffold(
+    body: _screens[_selectedIndex],
+    
+    bottomNavigationBar: BottomNavigationBar(
+      currentIndex: _selectedIndex,
+      onTap: (i) => setState(() => _selectedIndex = i),
+      selectedItemColor: Colors.orange,
+      items: const [
+        BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'Dashboard'),
+        BottomNavigationBarItem(icon: Icon(Icons.history), label: 'Riwayat'),
+        BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profil'),
+      ],
+    ),
+  );
+}
 }
