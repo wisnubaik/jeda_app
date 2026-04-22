@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:usage_stats/usage_stats.dart';
-import 'package:notification_listener_service/notification_listener_service.dart';
 import '../services/app_provider.dart';
 import 'dashboard_screen.dart';
 import 'history/history_screen.dart';
@@ -52,15 +51,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       return;
     }
-
-    // 3. Cek Notifikasi
-    bool hasNotif = await NotificationListenerService.isPermissionGranted();
-    if (!hasNotif) {
-      await _tampilkanDialog(
-        "Akses Notifikasi",
-        "Dibutuhkan untuk menghitung jumlah notifikasi masuk sesuai standar SAS-SV.",
-        () => p.openNotificationSettings()
-      );
+  
     }
   }
 

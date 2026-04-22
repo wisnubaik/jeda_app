@@ -17,6 +17,7 @@ class AppProvider extends ChangeNotifier {
   bool _isLoading = false;
   bool _hasPermission = false;
   bool _isMonitoringEnabled = true;
+  bool _isSoundEnabled = true;
   bool _initialized = false;
   Timer? _midnightTimer;
 
@@ -30,6 +31,7 @@ class AppProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get hasPermission => _hasPermission;
   bool get isMonitoringEnabled => _isMonitoringEnabled;
+  bool get isSoundEnabled => _isSoundEnabled;
   String get status => _prediction == 0 ? 'AMAN' : 'BAHAYA';
 
   // ─────────────────────────────────────────
@@ -51,24 +53,21 @@ class AppProvider extends ChangeNotifier {
       _model = await NaiveBayesModel.getInstance();
     } catch (_) {}
 
-    // ── Reset harian jam 00:00 ──
     final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now();
     final todayStr = '${now.year}-${now.month}-${now.day}';
     final lastDate = prefs.getString('last_date');
 
+    _isSoundEnabled = prefs.getBool('sound_enabled') ?? true;
+
     if (lastDate == todayStr) {
-      // Hari sama → pakai notif tersimpan
       _data.notifications = prefs.getInt('notif_count') ?? 0;
     } else {
-      // Hari baru → reset semua counter harian
       _data.notifications = 0;
       await prefs.setString('last_date', todayStr);
       await prefs.setInt('notif_count', 0);
-      print('🔄 Reset harian: notifikasi, screen time, unlock → 0');
+      print('🔄 Reset harian: notifikasi → 0');
     }
-
-    // Notifikasi dibaca lewat UsageStats di fetchUsageData()
 
     try {
       _hasPermission = (await UsageStats.checkUsagePermission()) ?? false;
@@ -86,64 +85,17 @@ class AppProvider extends ChangeNotifier {
   }
 
   // ─────────────────────────────────────────
-  // NOTIFICATION LISTENER
+  // SOUND TOGGLE
   // ─────────────────────────────────────────
-  // NOTIFIKASI — baca dari UsageStats queryEvents
-  // event type 6 = NOTIFICATION_INTERRUPTION
-  // Lebih andal di Infinix karena pakai izin PACKAGE_USAGE_STATS
-  // yang sudah terbukti jalan (screen time & unlock sudah OK)
-  // ─────────────────────────────────────────
-  Future<void> _fetchNotificationCount(SharedPreferences prefs) async {
-    try {
-      if (!_hasPermission) return;
-
-      final now = DateTime.now();
-      final startDate = DateTime(now.year, now.month, now.day, 0, 0, 0);
-
-      final allEvents = ((await UsageStats.queryEvents(startDate, now)) ?? [])
-          .cast<EventUsageInfo>();
-
-      // ── DEBUG: print semua event type yang ada hari ini ──
-      final Map<int, int> typeCounts = {};
-      for (final e in allEvents) {
-        final et = int.tryParse(e.eventType?.toString() ?? '') ?? -1;
-        typeCounts[et] = (typeCounts[et] ?? 0) + 1;
-      }
-      final sorted = typeCounts.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
-      print('📋 Semua event type hari ini: ${sorted.map((e) => "type${e.key}=${e.value}x").join(", ")}');
-
-      // Paket sistem yang diabaikan
-      const ignored = {
-        'android',
-        'com.android.systemui',
-        'com.android.phone',
-        'com.android.settings',
-        'com.wishnotregret.berijeda',
-      };
-
-      // Coba semua kemungkinan event type notifikasi:
-      // 6  = NOTIFICATION_INTERRUPTION (Android stock)
-      // 12 = bisa jadi notif di beberapa OEM
-      // 19 = NOTIFICATION_SEEN di beberapa ROM
-      // 20 = NOTIFICATION_INTERRUPTION di beberapa ROM
-      const notifTypes = {6, 12, 19, 20};
-
-      int count = 0;
-      for (final e in allEvents) {
-        final et = int.tryParse(e.eventType?.toString() ?? '') ?? -1;
-        if (!notifTypes.contains(et)) continue;
-        final pkg = e.packageName ?? '';
-        if (pkg.isEmpty || ignored.contains(pkg)) continue;
-        count++;
-      }
-
-      print('🔔 Notif count (type 6/12/19/20): $count');
-      _data.notifications = count;
-      await prefs.setInt('notif_count', count);
-    } catch (e) {
-      print('❌ Gagal fetch notif: $e');
-    }
+  Future<void> toggleSound(bool value) async {
+    _isSoundEnabled = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('sound_enabled', value);
+    notifyListeners();
   }
+
+  // ─────────────────────────────────────────
+  // MIDNIGHT RESET
   // ─────────────────────────────────────────
   void _scheduleMidnightReset() {
     _midnightTimer?.cancel();
@@ -174,25 +126,61 @@ class AppProvider extends ChangeNotifier {
 
       _runPrediction();
       notifyListeners();
-
-      // Jadwalkan reset untuk tengah malam berikutnya
       _scheduleMidnightReset();
     });
   }
 
   // ─────────────────────────────────────────
+  // FETCH NOTIFICATION COUNT
+  // ─────────────────────────────────────────
+  Future<void> _fetchNotificationCount(SharedPreferences prefs) async {
+    try {
+      if (!_hasPermission) return;
+
+      final now = DateTime.now();
+      final startDate = DateTime(now.year, now.month, now.day, 0, 0, 0);
+
+      final allEvents = ((await UsageStats.queryEvents(startDate, now)) ?? [])
+          .cast<EventUsageInfo>();
+
+      final Map<int, int> typeCounts = {};
+      for (final e in allEvents) {
+        final et = int.tryParse(e.eventType?.toString() ?? '') ?? -1;
+        typeCounts[et] = (typeCounts[et] ?? 0) + 1;
+      }
+      final sorted = typeCounts.entries.toList()
+        ..sort((a, b) => a.key.compareTo(b.key));
+      print('📋 Event types: ${sorted.map((e) => "type${e.key}=${e.value}x").join(", ")}');
+
+      const ignored = {
+        'android',
+        'com.android.systemui',
+        'com.android.phone',
+        'com.android.settings',
+        'com.wishnotregret.berijeda',
+      };
+
+      const notifTypes = {6, 12, 19, 20};
+
+      int count = 0;
+      for (final e in allEvents) {
+        final et = int.tryParse(e.eventType?.toString() ?? '') ?? -1;
+        if (!notifTypes.contains(et)) continue;
+        final pkg = e.packageName ?? '';
+        if (pkg.isEmpty || ignored.contains(pkg)) continue;
+        count++;
+      }
+
+      print('🔔 Notif count: $count');
+      _data.notifications = count;
+      await prefs.setInt('notif_count', count);
+    } catch (e) {
+      print('❌ Gagal fetch notif: $e');
+    }
+  }
+
+  // ─────────────────────────────────────────
   // FETCH USAGE DATA
-  //
-  // Screen Time  → dihitung manual dari pasangan event
-  //   MOVE_TO_FOREGROUND (1) & MOVE_TO_BACKGROUND (2)
-  //   per paket, lalu dijumlahkan SEMUA paket non-sistem
-  //   → hasilnya = total durasi layar aktif dipakai user
-  //   (mendekati "Screen Time" di Digital Wellbeing)
-  //
-  // Unlock Count → event SCREEN_INTERACTIVE (15) di Android ≥ 10
-  //   atau USER_INTERACTION (23) sebagai fallback.
-  //   Jika keduanya tidak ada, fallback ke KEYGUARD_HIDDEN (11).
-  //
   // ─────────────────────────────────────────
   Future<void> fetchUsageData() async {
     _isLoading = true;
@@ -222,8 +210,6 @@ class AppProvider extends ChangeNotifier {
         'com.mojang.minecraftpe',
       };
 
-      // ── Paket sistem yang dieksklusi dari screen time ──
-      // Ini mencegah launcher, system UI, dll menggelembungkan angka
       const systemPackagePrefixes = [
         'android',
         'com.android.',
@@ -231,7 +217,7 @@ class AppProvider extends ChangeNotifier {
         'com.google.android.gms',
         'com.google.android.gsf',
         'com.google.android.packageinstaller',
-        'com.infinix.',    // OEM Infinix
+        'com.infinix.',
         'com.itel.',
         'com.transsion.',
       ];
@@ -243,24 +229,13 @@ class AppProvider extends ChangeNotifier {
         return false;
       }
 
-      // ════════════════════════════════════════
-      // SCREEN TIME via FOREGROUND/BACKGROUND events
-      // ════════════════════════════════════════
-      //
-      // Algoritma:
-      //   Untuk setiap paket, kumpulkan semua event FOREGROUND & BACKGROUND
-      //   yang diurutkan berdasarkan waktu. Setiap pasangan FG→BG
-      //   menghasilkan durasi = BG.time - FG.time.
-      //   Jika ada FG tanpa pasangan BG (app masih buka), gunakan `now`.
-      //
       double totalScreenMs = 0;
       double socialMs = 0;
       double gamingMs = 0;
 
-      // event type 1 = MOVE_TO_FOREGROUND, 2 = MOVE_TO_BACKGROUND
-      final allEvents = ((await UsageStats.queryEvents(startDate, now)) ?? []).cast<EventUsageInfo>();
+      final allEvents = ((await UsageStats.queryEvents(startDate, now)) ?? [])
+          .cast<EventUsageInfo>();
 
-      // Kelompokkan per paket
       final Map<String, List<EventUsageInfo>> fgBgByPkg = {};
       for (final e in allEvents) {
         final et = int.tryParse(e.eventType?.toString() ?? '') ?? -1;
@@ -284,10 +259,8 @@ class AppProvider extends ChangeNotifier {
           final et = int.tryParse(e.eventType?.toString() ?? '') ?? -1;
           final ts = int.tryParse(e.timeStamp?.toString() ?? '0') ?? 0;
           if (et == 1) {
-            // FOREGROUND
             lastFgMs = ts;
           } else if (et == 2 && lastFgMs != null) {
-            // BACKGROUND — hitung durasi
             final dur = ts - lastFgMs;
             if (dur > 0) {
               totalScreenMs += dur;
@@ -297,7 +270,6 @@ class AppProvider extends ChangeNotifier {
             lastFgMs = null;
           }
         }
-        // App masih di foreground saat ini
         if (lastFgMs != null) {
           final dur = now.millisecondsSinceEpoch - lastFgMs;
           if (dur > 0) {
@@ -308,16 +280,6 @@ class AppProvider extends ChangeNotifier {
         }
       }
 
-      // ════════════════════════════════════════
-      // UNLOCK COUNT
-      // ════════════════════════════════════════
-      //
-      // Prioritas event type untuk unlock:
-      //   15 = SCREEN_INTERACTIVE  (Android 10+, paling akurat)
-      //   11 = KEYGUARD_HIDDEN     (layar tidak terkunci = unlock)
-      //   Jika event 15 tersedia → pakai 15
-      //   Jika tidak ada event 15 sama sekali → fallback ke 11
-      //
       int unlockCount = 0;
       int countType15 = 0;
       int countType11 = 0;
@@ -329,49 +291,39 @@ class AppProvider extends ChangeNotifier {
       }
 
       if (countType15 > 0) {
-        // SCREEN_INTERACTIVE tersedia → paling akurat
         unlockCount = countType15;
-        print('🔓 Unlock via SCREEN_INTERACTIVE (type 15): $unlockCount');
+        print('🔓 Unlock via type 15: $unlockCount');
       } else if (countType11 > 0) {
-        // Fallback ke KEYGUARD_HIDDEN
         unlockCount = countType11;
-        print('🔓 Unlock via KEYGUARD_HIDDEN (type 11): $unlockCount');
+        print('🔓 Unlock via type 11: $unlockCount');
       } else {
-        // Last resort: KEYGUARD_SHOWN (12) — estimasi
         for (final e in allEvents) {
           final et = int.tryParse(e.eventType?.toString() ?? '') ?? -1;
           if (et == 12) unlockCount++;
         }
-        print('🔓 Unlock via KEYGUARD_SHOWN fallback (type 12): $unlockCount');
+        print('🔓 Unlock via type 12: $unlockCount');
       }
 
-      // ════════════════════════════════════════
-      // FINALIZE
-      // ════════════════════════════════════════
-      final screenHours = totalScreenMs / 3_600_000.0;
-      final socialHours = socialMs / 3_600_000.0;
-      final gamingHours = gamingMs / 3_600_000.0;
+      final screenHours = totalScreenMs / 3600000.0;
+      final socialHours = socialMs / 3600000.0;
+      final gamingHours = gamingMs / 3600000.0;
 
-      print('📊 Screen time: ${screenHours.toStringAsFixed(2)} jam');
-      print('📱 Social: ${socialHours.toStringAsFixed(2)} jam');
-      print('🎮 Gaming: ${gamingHours.toStringAsFixed(2)} jam');
+      print('📊 Screen: ${screenHours.toStringAsFixed(2)}j | Social: ${socialHours.toStringAsFixed(2)}j');
 
       _data = UsageData(
         dailyScreenTime: screenHours,
         appSessions: unlockCount,
         socialMediaUsage: socialHours,
         gamingTime: gamingHours,
-        notifications: _data.notifications, // dipertahankan dari listener
+        notifications: _data.notifications,
         nightUsage: 0.0,
         appsInstalled: 0,
       );
 
-      print('✅ Final → '
-          'ST=${_data.dailyScreenTime.toStringAsFixed(2)}j '
-          '| Unlock=$unlockCount '
-          '| Notif=${_data.notifications}');
+      print('✅ Final → ST=${_data.dailyScreenTime.toStringAsFixed(2)}j'
+          ' | Unlock=$unlockCount'
+          ' | Notif=${_data.notifications}');
 
-      // Ambil notifikasi dari UsageStats event type 6
       final prefs = await SharedPreferences.getInstance();
       await _fetchNotificationCount(prefs);
 
@@ -395,7 +347,6 @@ class AppProvider extends ChangeNotifier {
     await platform.invokeMethod('openAccessibilitySettings');
   }
 
-  // openNotificationSettings: tidak diperlukan lagi (pakai UsageStats)
   Future<void> openNotificationSettings() async {}
 
   Future<void> requestPermission() async {
@@ -444,6 +395,8 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
     if (!value) {
       await _syncBlockerToNative(false);
+      // ← TAMBAH INI: batalkan notifikasi & suara yang sedang berjalan
+    await _notificationsPlugin.cancel(999);
       try {
         if (await FlutterOverlayWindow.isActive()) {
           await FlutterOverlayWindow.closeOverlay();
@@ -470,7 +423,6 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  // Alias untuk kompatibilitas — gunakan openAccessibilitySettings()
   Future<void> requestAccessibilityPermission() => openAccessibilitySettings();
 
   Future<bool> isOverlayPermissionGranted() async {
@@ -488,6 +440,7 @@ class AppProvider extends ChangeNotifier {
   Future<void> applySnoozeNative(int seconds) async {
     try {
       await platform.invokeMethod('setSnooze', {'seconds': seconds});
+      await _notificationsPlugin.cancel(999);
       try {
         if (await FlutterOverlayWindow.isActive()) {
           await FlutterOverlayWindow.closeOverlay();
@@ -516,13 +469,17 @@ class AppProvider extends ChangeNotifier {
         999,
         '⚠️ SAATNYA JEDA!',
         'Segera istirahat!',
-        const NotificationDetails(
+        NotificationDetails(
           android: AndroidNotificationDetails(
-            'jeda_suara_final_v1',
+            'jeda_alarm_v2',
             'Alarm Jeda Keras',
             importance: Importance.max,
             priority: Priority.high,
-            playSound: true,
+            playSound: _isSoundEnabled,
+            sound: _isSoundEnabled
+                ? const RawResourceAndroidNotificationSound('alarm')
+                : null,
+            enableVibration: _isSoundEnabled,
           ),
         ),
       );
