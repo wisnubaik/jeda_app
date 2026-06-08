@@ -10,21 +10,50 @@ class PermissionScreen extends StatefulWidget {
   State<PermissionScreen> createState() => _PermissionScreenState();
 }
 
-class _PermissionScreenState extends State<PermissionScreen> {
-  bool _usageGranted = false;
+class _PermissionScreenState extends State<PermissionScreen>
+    with WidgetsBindingObserver {          // ← tambah mixin ini
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);   // ← daftarkan
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<AppProvider>().addListener(_checkAndNavigate);
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this); // ← bersihkan
+    context.read<AppProvider>().removeListener(_checkAndNavigate);
+    super.dispose();
+  }
+
+  // Dipanggil setiap kali app kembali ke foreground
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _recheckPermission();
+    }
+  }
+
+  Future<void> _recheckPermission() async {
+    final provider = context.read<AppProvider>();
+    await provider.checkPermission();   // cek ulang tanpa fetch data dulu
+    _checkAndNavigate();
+  }
+
+  void _checkAndNavigate() {
+    final provider = context.read<AppProvider>();
+    if (provider.hasPermission && mounted) {
+      provider.removeListener(_checkAndNavigate);
+      Navigator.pushReplacementNamed(context, '/home');
+    }
+  }
 
   Future<void> _requestUsage() async {
     final provider = context.read<AppProvider>();
-    await provider.requestPermission();
-    await provider.requestOverlayPermission();
-
-    // Tunggu user selesai set permission di settings Android
-    await Future.delayed(const Duration(seconds: 1));
-    await provider.checkPermission();
-
-    if (!mounted) return;
-    // Langsung ke home, permission akan dicek ulang di dashboard
-    Navigator.pushReplacementNamed(context, '/home');
+    await provider.openUsageSettings();
   }
 
   @override

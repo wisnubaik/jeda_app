@@ -71,7 +71,7 @@ class AboutScreen extends StatelessWidget {
             ),
             const SizedBox(height: 40),
             Text(
-              '© 2024 Jeda Project',
+              '© 2026 Jeda Project',
               style: GoogleFonts.poppins(
                   fontSize: 12, color: Colors.grey[300]),
             ),

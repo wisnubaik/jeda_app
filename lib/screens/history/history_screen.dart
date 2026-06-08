@@ -214,94 +214,189 @@ class _HistoryScreenState extends State<HistoryScreen>
   }
 
   Widget _buildLogDeteksi(AppProvider provider) {
-    final status = provider.status;
-    final prob = provider.addictionProb;
-    final now = DateTime.now();
+  final now = DateTime.now();
+  final timeStr =
+      '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
 
-    final logs = [
-      if (status == 'BAHAYA')
-        {
-          'time':
-              '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}',
-          'title': 'Terdeteksi Bahaya',
-          'desc': 'Durasi penggunaan berlebihan',
-          'color': const Color(0xFFEF4444),
-        },
-      if (provider.data.nightUsage > 0)
-        {
-          'time': '22:00',
-          'title': 'Terdeteksi Penggunaan Malam',
-          'desc': 'Penggunaan di jam tidur malam',
-          'color': const Color(0xFFFFC107),
-        },
-    ];
+  final prediction = provider.prediction;
+  final data = provider.data;
+  final logs = <Map<String, dynamic>>[];
 
-    if (logs.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+  // ── 1. STATUS MODEL (Waspada / Bahaya) ──────────────────────────
+  if (prediction == 2) {
+    logs.add({
+      'time': timeStr,
+      'title': 'Status: BAHAYA',
+      'desc':
+          'Model deteksi menunjukkan pola penggunaan berisiko tinggi berdasarkan durasi, sesi, dan notifikasi harian.',
+      'color': const Color(0xFFEF4444),
+      'icon': Icons.warning_rounded,
+      'source': 'Kwon et al., 2013 — SAS-SV',
+    });
+  } else if (prediction == 1) {
+    logs.add({
+      'time': timeStr,
+      'title': 'Status: WASPADA',
+      'desc':
+          'Penggunaan mendekati batas risiko. Kurangi durasi layar sebelum meningkat ke kategori bahaya.',
+      'color': const Color(0xFFFFC107),
+      'icon': Icons.info_rounded,
+      'source': 'Kwon et al., 2013 — SAS-SV',
+    });
+  }
+
+  // ── 2. DOMINASI SOSIAL MEDIA ─────────────────────────────────────
+  if (data.dailyScreenTime > 0 &&
+      (data.socialMediaUsage / data.dailyScreenTime) > 0.5) {
+    logs.add({
+      'time': timeStr,
+      'title': 'Dominasi Sosial Media',
+      'desc':
+          'Lebih dari 50% waktu layarmu digunakan untuk sosial media. Remaja yang menggunakan sosmed >3 jam/hari berisiko lebih tinggi mengalami depresi dan kecemasan.',
+      'color': const Color(0xFFEC4899),
+      'icon': Icons.tag_rounded,
+      'source': 'Springer Nature, 2025',
+    });
+  }
+
+  // ── 3. PENGGUNAAN MALAM ──────────────────────────────────────────
+  if (data.nightUsage > 0.5) {
+    logs.add({
+      'time': timeStr,
+      'title': 'Penggunaan Malam Berlebihan',
+      'desc':
+          'Terdeteksi penggunaan smartphone >30 menit setelah pukul 22:00. Berkaitan dengan gangguan tidur dan penurunan kesehatan mental remaja.',
+      'color': const Color(0xFF6366F1),
+      'icon': Icons.nightlight_rounded,
+      'source': 'Swedish Public Health Agency, 2024; Journal of Adolescence, 2024',
+    });
+  } else if (data.nightUsage > 0.0) {
+    logs.add({
+      'time': timeStr,
+      'title': 'Aktivitas Malam Terdeteksi',
+      'desc':
+          'Terdeteksi penggunaan smartphone setelah pukul 22:00. Hindari layar minimal 1 jam sebelum tidur.',
+      'color': const Color(0xFF8B5CF6),
+      'icon': Icons.nightlight_outlined,
+      'source': 'Swedish Public Health Agency, 2024',
+    });
+  }
+
+  // ── 4. SOSIAL MEDIA DI MALAM HARI ───────────────────────────────
+  if (data.nightUsage > 0.3 && data.socialMediaUsage > 1.0) {
+    logs.add({
+      'time': timeStr,
+      'title': 'Sosial Media di Malam Hari',
+      'desc':
+          'Kombinasi penggunaan sosmed tinggi dan aktif di malam hari secara khusus berkaitan dengan gangguan tidur dan depresi pada remaja di 18 negara.',
+      'color': const Color(0xFFF97316),
+      'icon': Icons.bedtime_rounded,
+      'source': 'Sleep Health Journal, 2023',
+    });
+  }
+
+  // ── EMPTY STATE ──────────────────────────────────────────────────
+  if (logs.isEmpty) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.check_circle_outline_rounded,
+              size: 60, color: Colors.grey[300]),
+          const SizedBox(height: 12),
+          Text(
+            'Tidak ada log deteksi hari ini',
+            style: GoogleFonts.poppins(color: Colors.grey[400]),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Penggunaanmu masih dalam batas aman 👍',
+            style: GoogleFonts.poppins(
+                fontSize: 12, color: Colors.grey[300]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── LIST ─────────────────────────────────────────────────────────
+  return ListView.builder(
+    padding: const EdgeInsets.symmetric(horizontal: 20),
+    itemCount: logs.length,
+    itemBuilder: (context, i) {
+      final log = logs[i];
+      return Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: (log['color'] as Color).withOpacity(0.2),
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.check_circle_outline_rounded,
-                size: 60, color: Colors.grey[300]),
-            const SizedBox(height: 12),
             Text(
-              'Tidak ada log deteksi hari ini',
-              style: GoogleFonts.poppins(color: Colors.grey[400]),
+              log['time'] as String,
+              style: GoogleFonts.poppins(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[400],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: (log['color'] as Color).withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                log['icon'] as IconData,
+                color: log['color'] as Color,
+                size: 16,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    log['title'] as String,
+                    style: GoogleFonts.poppins(
+                      fontWeight: FontWeight.w700,
+                      color: log['color'] as Color,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    log['desc'] as String,
+                    style: GoogleFonts.poppins(
+                      fontSize: 11,
+                      color: Colors.grey[500],
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '📚 ${log['source']}',
+                    style: GoogleFonts.poppins(
+                      fontSize: 10,
+                      color: Colors.grey[350],
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
       );
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      itemCount: logs.length,
-      itemBuilder: (context, i) {
-        final log = logs[i];
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Row(
-            children: [
-              Text(
-                log['time'] as String,
-                style: GoogleFonts.poppins(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey[400],
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      log['title'] as String,
-                      style: GoogleFonts.poppins(
-                        fontWeight: FontWeight.w700,
-                        color: log['color'] as Color,
-                        fontSize: 14,
-                      ),
-                    ),
-                    Text(
-                      log['desc'] as String,
-                      style: GoogleFonts.poppins(
-                        fontSize: 12,
-                        color: Colors.grey[400],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
+    },
+  );
 }
+    }

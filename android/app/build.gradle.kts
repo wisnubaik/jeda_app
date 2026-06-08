@@ -21,8 +21,8 @@ android {
 
     defaultConfig {
         applicationId = "com.wishnotregret.berijeda"
-        minSdk = flutter.minSdkVersion
-        targetSdk = 36
+        minSdk = 26
+        targetSdk = 35
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }

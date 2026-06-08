@@ -132,23 +132,30 @@ class _GatekeeperScreenState extends State<GatekeeperScreen> {
 
               // Input nama
               TextField(
-                controller: _nameCtrl,
-                textCapitalization: TextCapitalization.words,
-                style: GoogleFonts.poppins(fontSize: 15),
-                decoration: InputDecoration(
-                  hintText: 'Ketik namamu...',
-                  hintStyle:
-                      GoogleFonts.poppins(color: Colors.grey[400]),
-                  filled: true,
-                  fillColor: const Color(0xFFF8F9FA),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 14),
-                ),
-              ),
+  controller: _nameCtrl,
+  textCapitalization: TextCapitalization.words,
+  style: GoogleFonts.poppins(fontSize: 15),
+  enableIMEPersonalizedLearning: false,
+  scribbleEnabled: false,
+  showCursor: true,
+  autocorrect: false,
+  autofocus: false, // ← pastikan false
+  onTap: () {
+    // kosongkan — jangan panggil apapun
+  },
+  decoration: InputDecoration(
+    hintText: 'Ketik namamu...',
+    hintStyle: GoogleFonts.poppins(color: Colors.grey[400]),
+    filled: true,
+    fillColor: const Color(0xFFF8F9FA),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide.none,
+    ),
+    contentPadding: const EdgeInsets.symmetric(
+        horizontal: 16, vertical: 14),
+  ),
+),
               const SizedBox(height: 80),
 
               // Tombol

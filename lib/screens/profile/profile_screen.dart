@@ -27,7 +27,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _loadUser() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      _userName = prefs.getString('user_name') ?? 'Nama User';
+      final raw = prefs.getString('user_name') ?? 'Nama User';
+_userName = raw.isNotEmpty
+    ? raw[0].toUpperCase() + raw.substring(1)
+    : 'Nama User';
       _userClass = prefs.getString('user_class') ?? 'Kelas 7';
       _userMotivation = prefs.getString('user_motivation') ?? '';
       _userPhoto = prefs.getString('user_photo');
@@ -208,7 +211,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    'Jeda v1.0.0 (Build 2024)',
+                    'Jeda v1.0.0 (Build 2026)',
                     style: GoogleFonts.poppins(
                       fontSize: 12,
                       color: Colors.grey[400],

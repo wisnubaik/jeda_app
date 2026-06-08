@@ -23,33 +23,29 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   bool _isWarningOpen = false;
 
   @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this); // Nyalakan Sensor
-    _loadUser();
+void initState() {
+  super.initState();
+  WidgetsBinding.instance.addObserver(this);
+  _loadUser();
+
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    _provider = context.read<AppProvider>(); // tetap di sini
+    await _provider!.initialize();
     
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      _provider = context.read<AppProvider>();
-      await _provider!.initialize();
-      
-      if (mounted) {
-        setState(() => _lastUpdated = DateTime.now());
-      }
+    if (mounted) setState(() => _lastUpdated = DateTime.now());
 
-      bool isAccEnabled = await _provider!.isAccessibilityEnabled();
-      if (!isAccEnabled && mounted) {
-        _showAccessibilityDialog();
-      }
+    bool isAccEnabled = await _provider!.isAccessibilityEnabled();
+    if (!isAccEnabled && mounted) _showAccessibilityDialog();
 
-      _checkAndShowWarning(); // Cek langsung saat buka
-    });
+    _checkAndShowWarning();
+  });
 
-    _timer = Timer.periodic(const Duration(minutes: 1), (_) async {
-      if (!mounted) return;
-      await _provider?.fetchUsageData();
-      setState(() => _lastUpdated = DateTime.now());
-    });
-  }
+  _timer = Timer.periodic(const Duration(minutes: 1), (_) async {
+    if (!mounted || _provider == null) return; // ← tambah null check
+    await _provider!.fetchUsageData();
+    if (mounted) setState(() => _lastUpdated = DateTime.now());
+  });
+}
 
   @override
   void dispose() {
@@ -335,7 +331,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                                       const SizedBox(height: 16),
                                       ClipRRect(borderRadius: BorderRadius.circular(8), child: LinearProgressIndicator(value: prob, minHeight: 6, backgroundColor: Colors.grey[200], color: statusColor)),
                                       const SizedBox(height: 4),
-                                      Text('Akurasi Model: 98.23% | Probabilitas: ${(prob * 100).toStringAsFixed(1)}%', style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[400])),
+                                      Text('Probabilitas: ${(prob * 100).toStringAsFixed(1)}%', 
+    style: GoogleFonts.poppins(fontSize: 11, color: Colors.grey[400])),
                                     ],
                                   )
                                 : Column(children: [Icon(Icons.wb_sunny_rounded, size: 64, color: Colors.grey[300]), const SizedBox(height: 16), Text('Monitoring Mati', style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.grey[400]))]),

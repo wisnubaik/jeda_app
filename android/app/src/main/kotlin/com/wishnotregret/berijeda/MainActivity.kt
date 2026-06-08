@@ -15,6 +15,7 @@ import io.flutter.plugin.common.MethodChannel.Result as FlutterResult
 class MainActivity : FlutterActivity() {
 
     private val CHANNEL = "com.wishnotregret.berijeda/blocker"
+    private var _waitingForPermission = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -99,8 +100,44 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
 
+                "openUsageSettings" -> {
+                    _waitingForPermission = true  // ← set flag sebelum buka settings
+                    startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                    result.success(null)
+                }
+
+                "openNotificationSettings" -> {
+                    val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(intent)
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
     }
+
+    override fun onResume() {
+    super.onResume()
+
+    if (!_waitingForPermission) return
+    // Jangan reset dulu di sini — reset setelah confirm permission
+
+    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+        val currentEngine = flutterEngine ?: return@postDelayed
+        if (!currentEngine.dartExecutor.isExecutingDart) return@postDelayed
+
+        _waitingForPermission = false  // ← reset DI SINI, bukan sebelumnya
+
+        MethodChannel(currentEngine.dartExecutor.binaryMessenger, CHANNEL)
+            .invokeMethod("onAppResumed", null)
+    }, 500)
+}
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+    // Block request code 1199 yang menyebabkan crash di NotificationListenerServicePlugin
+    if (requestCode == 1199) return
+    super.onActivityResult(requestCode, resultCode, data)
+}
+
 }

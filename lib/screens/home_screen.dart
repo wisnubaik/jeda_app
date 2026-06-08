@@ -17,57 +17,67 @@ class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
   bool _isDialogShowing = false;
 
-  final List<Widget> _screens = [const DashboardScreen(), const HistoryScreen(), const ProfileScreen()];
+  final List<Widget> _screens = [
+    const DashboardScreen(),
+    const HistoryScreen(),
+    const ProfileScreen(),
+  ];
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _logicPengecekanIzin());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _logicPengecekanIzin(),
+    );
   }
 
   Future<void> _logicPengecekanIzin() async {
-    if (_isDialogShowing) return;
+  if (_isDialogShowing) return;
 
-    final p = context.read<AppProvider>();
+  final p = context.read<AppProvider>();
 
-    // 1. Cek Usage Stats
-    bool hasUsage = await UsageStats.checkUsagePermission() ?? false;
-    if (!hasUsage) {
-      await _tampilkanDialog(
-        "Izin Akses Data",
-        "Jeda butuh izin ini untuk menghitung Screen Time kamu secara akurat.",
-        () => p.openUsageSettings()
-      );
-      return; 
-    }
-
-    // 2. Cek Aksesibilitas
-    bool hasAccess = await p.isAccessibilityEnabled();
-    if (!hasAccess) {
-      await _tampilkanDialog(
-        "Izin Aksesibilitas",
-        "Dibutuhkan agar fitur pemblokiran Jeda bisa bekerja.",
-        () => p.openAccessibilitySettings()
-      );
-      return;
-    }
-  
-    }
+  // Hanya cek Usage Stats — aksesibilitas sudah dicek di dashboard
+  bool hasUsage = await UsageStats.checkUsagePermission() ?? false;
+  if (!hasUsage) {
+    await _tampilkanDialog(
+      "Izin Akses Data",
+      "Jeda butuh izin ini untuk menghitung Screen Time kamu secara akurat.",
+      () => p.openUsageSettings(),
+    );
   }
+}
 
-  Future<void> _tampilkanDialog(String t, String d, VoidCallback action) async {
+  Future<void> _tampilkanDialog(
+    String t,
+    String d,
+    VoidCallback action,
+  ) async {
     setState(() => _isDialogShowing = true);
     await showDialog(
       context: context,
       barrierDismissible: false,
       builder: (c) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        title: Text(t, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.orange)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(15),
+        ),
+        title: Text(
+          t,
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            color: Colors.orange,
+          ),
+        ),
         content: Text(d),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(c), child: const Text("Nanti")),
+          TextButton(
+            onPressed: () => Navigator.pop(c),
+            child: const Text("Nanti"),
+          ),
           ElevatedButton(
-            onPressed: () { Navigator.pop(c); action(); },
+            onPressed: () {
+              Navigator.pop(c);
+              action();
+            },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
             child: const Text("Buka Pengaturan"),
           ),
@@ -78,20 +88,28 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   @override
-Widget build(BuildContext context) {
-  return Scaffold(
-    body: _screens[_selectedIndex],
-    
-    bottomNavigationBar: BottomNavigationBar(
-      currentIndex: _selectedIndex,
-      onTap: (i) => setState(() => _selectedIndex = i),
-      selectedItemColor: Colors.orange,
-      items: const [
-        BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'Dashboard'),
-        BottomNavigationBarItem(icon: Icon(Icons.history), label: 'Riwayat'),
-        BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profil'),
-      ],
-    ),
-  );
-}
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: _screens[_selectedIndex],
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _selectedIndex,
+        onTap: (i) => setState(() => _selectedIndex = i),
+        selectedItemColor: Colors.orange,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.dashboard),
+            label: 'Dashboard',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.history),
+            label: 'Riwayat',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person),
+            label: 'Profil',
+          ),
+        ],
+      ),
+    );
+  }
 }
