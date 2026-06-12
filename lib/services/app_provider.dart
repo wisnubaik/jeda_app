@@ -9,6 +9,8 @@ import 'package:notification_listener_service/notification_listener_service.dart
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/usage_data.dart';
 import '../models/naive_bayes_model.dart';
+import 'package:flutter/material.dart';
+
 
 class AppProvider extends ChangeNotifier {
   UsageData _data = UsageData();
@@ -16,13 +18,31 @@ class AppProvider extends ChangeNotifier {
   int _prediction = 0;
   double _addictionProb = 0;
   bool _isLoading = false;
+  bool _isInitialLoading = true;
+  bool get isInitialLoading => _isInitialLoading;
   bool _hasPermission = false;
   bool _isMonitoringEnabled = true;
   bool _isSoundEnabled = true;
   bool _initialized = false;
+  bool _appNamesLoaded = false;
   bool _notifListenerActive = false;
+Map<String, double> _appUsageMap = {}; // variabel simpan data usage per app
+Map<String, String> _appNameMap = {};  // variabel simpan data nama app per package name
+Map<String, int> _appCategoryMap = {};
+
+Map<String, double> get appUsageMap => _appUsageMap;
+Map<String, String> get appNameMap => _appNameMap;
+Map<String, int> get appCategoryMap => _appCategoryMap;
   Timer? _midnightTimer;
   Timer? _pollingTimer;
+
+  // Tambah di bagian deklarasi variabel atas
+
+  // Tambah di bagian deklarasi variabel atas AppProvider:
+final Map<String, String> _logFirstDetectedTime = {};
+
+final List<Map<String, dynamic>> _detectionLogs = [];
+List<Map<String, dynamic>> get detectionLogs => _detectionLogs;
 
   final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
@@ -97,8 +117,8 @@ class AppProvider extends ChangeNotifier {
     );
 
     try {
-      _model = await NaiveBayesModel.getInstance();
-    } catch (_) {}
+  _model = await NaiveBayesModel.getInstance();
+} catch (_) {}
 
     final prefs = await SharedPreferences.getInstance();
     final now = DateTime.now();
@@ -129,11 +149,13 @@ class AppProvider extends ChangeNotifier {
       _hasPermission = false;
     }
 
-    if (_hasPermission) await fetchUsageData();
-
     _listenOverlayEvents();
     _scheduleMidnightReset();
     _startUsagePolling();
+
+    await _loadAppNames();
+    if (_hasPermission) await fetchUsageData();
+
     platform.setMethodCallHandler((call) async {
     if (call.method == 'onAppResumed') {
       await onAppResumed();
@@ -214,6 +236,8 @@ class AppProvider extends ChangeNotifier {
       final now2 = DateTime.now();
       final todayStr = '${now2.year}-${now2.month}-${now2.day}';
       _lastNotifTime.clear();
+      _detectionLogs.clear();           
+      _logFirstDetectedTime.clear();  
 
       _data = UsageData(
         dailyScreenTime: 0,
@@ -246,8 +270,9 @@ class AppProvider extends ChangeNotifier {
 }
 
   Future<void> fetchUsageData() async {
-  _isLoading = true;
-  notifyListeners();
+  if (!_appNamesLoaded) {
+    await _loadAppNames();
+  }
 
   try {
     final now = DateTime.now();
@@ -298,11 +323,11 @@ const systemPackagePrefixes = [
 const systemExactPackages = {
   'android',
   'com.android.systemui',
-  // com.wishnotregret.berijeda → TETAP JANGAN difilter (sudah benar)
+  'com.wishnotregret.berijeda', //masi bingung filter atau ngga
   'com.google.android.launcher',
   'com.infinix.launcher',
   'com.transsion.hilauncher',
-  'com.transsion.XOSLauncher',    // ← launcher utama Infinix
+  'com.transsion.XOSLauncher',    
   'com.android.launcher',
   'com.android.launcher3',
   'com.google.android.apps.wellbeing',
@@ -311,6 +336,10 @@ const systemExactPackages = {
   'com.google.android.tts',                    // TTS service
   'com.google.android.googlequicksearchbox',   // Search bar
   'com.community.oneroom',
+  'com.oppo.launcher',
+  'com.coloros.soundrecorder',
+  'com.coloros.wirelesssettings',
+  'com.coloros.securitypermission',
 };
 
 // App yang DIKECUALIKAN dari filter com.android.* prefix
@@ -500,6 +529,23 @@ totalScreenMs = reconciledTotal;
 socialMs = reconciledSocial;
 gamingMs = reconciledGaming;
 debugPrint('⚖️ Rekonsiliasi: ${(totalScreenMs/3600000).toStringAsFixed(2)}j');
+
+// Isi _appUsageMap dari hasil rekonsiliasi
+_appUsageMap = {};
+for (final pkg in allPkgs) {
+  if (isSystemPackage(pkg)) continue;
+  if (pkg == 'android') continue; // ← tambah ini
+  if (pkg.isEmpty) continue;      // ← dan ini
+  final eventVal = eventsDuration[pkg] ?? 0.0;
+  final queryVal = queryStatsPerApp[pkg] ?? 0.0;
+  final chosen = eventVal > 0
+      ? eventVal
+      : (queryVal > 1800000 ? 1800000.0 : queryVal);
+  if (chosen > 0) {
+    _appUsageMap[pkg] = chosen / 3600000.0;
+  }
+}
+
     // ════ SCREEN UNLOCKS ════
     int sessionCount = 0;
     for (final e in allEvents) {
@@ -588,7 +634,96 @@ debugPrint('⚖️ Rekonsiliasi: ${(totalScreenMs/3600000).toStringAsFixed(2)}j'
   }
 
   _isLoading = false;
+  _isInitialLoading = false;
   notifyListeners();
+}
+
+    void _generateDetectionLogs() {
+  final now = DateTime.now();
+  final timeStr =
+      '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+  // Jangan duplikat — cek dulu apakah log sejenis sudah ada
+  void addLog(String key, Map<String, dynamic> log) {
+  final exists = _detectionLogs.any((l) => l['key'] == key);
+  if (!exists) {
+    // Catat waktu PERTAMA kali kondisi ini terpenuhi
+    if (!_logFirstDetectedTime.containsKey(key)) {
+      _logFirstDetectedTime[key] = timeStr;
+    }
+    final firstTime = _logFirstDetectedTime[key] ?? timeStr;
+    _detectionLogs.add({...log, 'key': key, 'time': firstTime});
+  }
+}
+
+  // 1. Status model
+  if (_prediction == 2) {
+    addLog('status_bahaya', {
+      'title': 'Status: BAHAYA',
+      'desc': 'Model deteksi menunjukkan pola penggunaan berisiko tinggi berdasarkan durasi, sesi, dan notifikasi harian.',
+      'color': const Color(0xFFEF4444),
+      'icon': Icons.warning_rounded,
+      'source': 'Kwon et al., 2013 — SAS-SV',
+    });
+    _detectionLogs.removeWhere((l) => l['key'] == 'status_waspada');
+  } else if (_prediction == 1) {
+    addLog('status_waspada', {
+      'title': 'Status: WASPADA',
+      'desc': 'Penggunaan mendekati batas risiko. Kurangi durasi layar sebelum meningkat ke kategori bahaya.',
+      'color': const Color(0xFFFFC107),
+      'icon': Icons.info_rounded,
+      'source': 'Kwon et al., 2013 — SAS-SV',
+    });
+    _detectionLogs.removeWhere((l) => l['key'] == 'status_bahaya');
+  } else {
+    // Kembali aman — hapus status
+    _detectionLogs.removeWhere(
+        (l) => l['key'] == 'status_bahaya' || l['key'] == 'status_waspada');
+  }
+
+  // 2. Dominasi sosial media
+  if (_data.dailyScreenTime > 0 &&
+      (_data.socialMediaUsage / _data.dailyScreenTime) > 0.5) {
+    addLog('dominasi_sosmed', {
+      'title': 'Dominasi Sosial Media',
+      'desc': 'Lebih dari 50% waktu layarmu digunakan untuk sosial media. Remaja yang menggunakan sosmed >3 jam/hari berisiko lebih tinggi mengalami depresi dan kecemasan.',
+      'color': const Color(0xFFEC4899),
+      'icon': Icons.tag_rounded,
+      'source': 'Springer Nature, 2025',
+    });
+  }
+
+  // 3. Penggunaan malam
+  if (_data.nightUsage > 0.5) {
+    _detectionLogs.removeWhere((l) => l['key'] == 'aktivitas_malam');
+    addLog('malam_berlebihan', {
+      'title': 'Penggunaan Malam Berlebihan',
+      'desc': 'Terdeteksi penggunaan smartphone >30 menit setelah pukul 22:00. Berkaitan dengan gangguan tidur dan penurunan kesehatan mental remaja.',
+      'color': const Color(0xFF6366F1),
+      'icon': Icons.nightlight_rounded,
+      'source': 'Swedish Public Health Agency, 2024; Journal of Adolescence, 2024',
+    });
+  } else if (_data.nightUsage > 0.0) {
+    _detectionLogs.removeWhere((l) => l['key'] == 'malam_berlebihan');
+    addLog('aktivitas_malam', {
+      'title': 'Aktivitas Malam Terdeteksi',
+      'desc': 'Terdeteksi penggunaan smartphone setelah pukul 22:00. Hindari layar minimal 1 jam sebelum tidur.',
+      'color': const Color(0xFF8B5CF6),
+      'icon': Icons.nightlight_outlined,
+      'source': 'Swedish Public Health Agency, 2024',
+    });
+  }
+
+  // 4. Sosial media di malam hari
+  if (_data.nightUsage > 0.3 && _data.socialMediaUsage > 1.0) {
+    addLog('sosmed_malam', {
+      'title': 'Sosial Media di Malam Hari',
+      'desc': 'Kombinasi penggunaan sosmed tinggi dan aktif di malam hari secara khusus berkaitan dengan gangguan tidur dan depresi pada remaja di 18 negara.',
+      'color': const Color(0xFFF97316),
+      'icon': Icons.bedtime_rounded,
+      'source': 'Sleep Health Journal, 2023',
+    });
+  }
 }
 
   double _intersectWithNight(
@@ -824,13 +959,38 @@ debugPrint('⚖️ Rekonsiliasi: ${(totalScreenMs/3600000).toStringAsFixed(2)}j'
   }
 
   Future<void> resetDailyData() async {
+    _detectionLogs.clear();
     _data = UsageData();
+    _logFirstDetectedTime.clear();
     _prediction = 0;
     _addictionProb = 0;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('notif_count', 0);
     notifyListeners();
   }
+
+  Future<void> _loadAppNames() async {
+  try {
+    final List<dynamic> apps = await platform.invokeMethod('getInstalledApps');
+    _appNameMap = {
+      for (final app in apps)
+        (app['packageName'] as String): (app['appName'] as String)
+    };
+    _appCategoryMap = {          
+  for (final app in apps)
+    (app['packageName'] as String): (app['category'] as int? ?? -1)
+};
+    _appNamesLoaded = true;
+    debugPrint('✅ App names loaded: ${_appNameMap.length} apps');
+  } catch (e) {
+    _appNamesLoaded = true;
+    debugPrint('❌ Gagal load app names: $e');
+  }
+}
+
+  String _getAppName(String pkg) {
+  return _appNameMap[pkg] ?? pkg.split('.').last;
+}
 
   void updateData({
     double? screenTime,
@@ -866,6 +1026,7 @@ debugPrint('⚖️ Rekonsiliasi: ${(totalScreenMs/3600000).toStringAsFixed(2)}j'
     ]);
     _prediction = result['prediction'];
     _addictionProb = result['probability'];
+    _generateDetectionLogs();
     
     debugPrint('🧠 Prediksi: $_prediction | Prob: $_addictionProb');
     debugPrint('   Input: screen=${_data.dailyScreenTime.toStringAsFixed(2)}j'

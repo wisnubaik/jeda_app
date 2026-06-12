@@ -23,11 +23,10 @@ class _PermissionScreenState extends State<PermissionScreen>
   }
 
   @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this); // ← bersihkan
-    context.read<AppProvider>().removeListener(_checkAndNavigate);
-    super.dispose();
-  }
+void dispose() {
+  WidgetsBinding.instance.removeObserver(this);  // ← tambah ini
+  super.dispose();
+}
 
   // Dipanggil setiap kali app kembali ke foreground
   @override

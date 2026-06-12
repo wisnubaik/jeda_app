@@ -14,6 +14,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 
     <!-- Usage Stats — protected, granted via Settings -->
     <uses-permission
@@ -66,9 +69,9 @@
              Dibutuhkan untuk pop-up peringatan
         ════════════════════════════════════════════ -->
         <service
-            android:name="com.example.flutter_overlay_window.OverlayService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse" />
+    android:name="flutter.overlay.window.flutter_overlay_window.OverlayService"
+    android:exported="false"
+    android:foregroundServiceType="specialUse" />
 
         <!-- ═══════════════════════════════════════════
              4. MAIN ACTIVITY

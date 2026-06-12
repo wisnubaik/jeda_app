@@ -24,13 +24,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _loadUser();
   }
 
+  /// Ubah "budi   santoso" -> "Budi Santoso"
+  String _toTitleCase(String text) {
+    final trimmed = text.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (trimmed.isEmpty) return trimmed;
+    return trimmed.split(' ').map((word) {
+      if (word.isEmpty) return word;
+      return word[0].toUpperCase() + word.substring(1).toLowerCase();
+    }).join(' ');
+  }
+
   Future<void> _loadUser() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       final raw = prefs.getString('user_name') ?? 'Nama User';
-_userName = raw.isNotEmpty
-    ? raw[0].toUpperCase() + raw.substring(1)
-    : 'Nama User';
+      _userName = raw.isNotEmpty ? _toTitleCase(raw) : 'Nama User';
       _userClass = prefs.getString('user_class') ?? 'Kelas 7';
       _userMotivation = prefs.getString('user_motivation') ?? '';
       _userPhoto = prefs.getString('user_photo');
@@ -146,12 +154,23 @@ _userName = raw.isNotEmpty
                         : null,
                   ),
                   const SizedBox(height: 12),
-                  Text(
-                    _userName,
-                    style: GoogleFonts.poppins(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white,
+                  // STEP: Nama dibungkus Padding horizontal + dibatasi
+                  // 1 baris dengan TextOverflow.ellipsis, agar nama
+                  // panjang otomatis dipotong jadi "..." dan tidak
+                  // merusak layout header (adaptif ke lebar device,
+                  // tidak perlu hardcode jumlah karakter).
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Text(
+                      _userName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.poppins(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                   Text(
@@ -170,12 +189,23 @@ _userName = raw.isNotEmpty
                         color: Colors.white24,
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: Text(
-                        '"$_userMotivation"',
-                        style: GoogleFonts.poppins(
-                          fontSize: 12,
-                          color: Colors.white,
-                          fontStyle: FontStyle.italic,
+                      child: ConstrainedBox(
+                        // STEP: Motivasi juga rawan kepanjangan (max 2 baris
+                        // di edit profile), jadi dibatasi 1 baris + ellipsis
+                        // agar pill tidak melebar/merusak layout header.
+                        constraints: BoxConstraints(
+                          maxWidth:
+                              MediaQuery.of(context).size.width - 80,
+                        ),
+                        child: Text(
+                          '"$_userMotivation"',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            color: Colors.white,
+                            fontStyle: FontStyle.italic,
+                          ),
                         ),
                       ),
                     ),

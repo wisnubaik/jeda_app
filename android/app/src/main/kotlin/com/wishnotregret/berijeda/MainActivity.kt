@@ -75,7 +75,6 @@ class MainActivity : FlutterActivity() {
                     result.success(enabled)
                 }
 
-                // ✅ BARU: Cek izin overlay
                 "checkOverlayPermission" -> {
                     val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         Settings.canDrawOverlays(this)
@@ -85,7 +84,6 @@ class MainActivity : FlutterActivity() {
                     result.success(granted)
                 }
 
-                // ✅ BARU: Minta izin overlay
                 "requestOverlayPermission" -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
                         !Settings.canDrawOverlays(this)
@@ -101,43 +99,60 @@ class MainActivity : FlutterActivity() {
                 }
 
                 "openUsageSettings" -> {
-                    _waitingForPermission = true  // ← set flag sebelum buka settings
+                    _waitingForPermission = true
                     startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
                     result.success(null)
                 }
 
                 "openNotificationSettings" -> {
                     val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     startActivity(intent)
                     result.success(null)
                 }
+
+                "getInstalledApps" -> {
+    Thread {
+        val pm = packageManager
+        val apps = pm.getInstalledApplications(0)
+        val list = apps.map { info ->
+            val category = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                info.category
+            } else {
+                -1
+            }
+            mapOf(
+                "packageName" to info.packageName,
+                "appName" to pm.getApplicationLabel(info).toString(),
+                "category" to category
+            )
+        }
+        runOnUiThread { result.success(list) }
+    }.start()
+}
+
                 else -> result.notImplemented()
             }
         }
     }
 
     override fun onResume() {
-    super.onResume()
+        super.onResume()
 
-    if (!_waitingForPermission) return
-    // Jangan reset dulu di sini — reset setelah confirm permission
+        if (!_waitingForPermission) return
 
-    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-        val currentEngine = flutterEngine ?: return@postDelayed
-        if (!currentEngine.dartExecutor.isExecutingDart) return@postDelayed
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            val currentEngine = flutterEngine ?: return@postDelayed
+            if (!currentEngine.dartExecutor.isExecutingDart) return@postDelayed
 
-        _waitingForPermission = false  // ← reset DI SINI, bukan sebelumnya
+            _waitingForPermission = false
 
-        MethodChannel(currentEngine.dartExecutor.binaryMessenger, CHANNEL)
-            .invokeMethod("onAppResumed", null)
-    }, 500)
-}
+            MethodChannel(currentEngine.dartExecutor.binaryMessenger, CHANNEL)
+                .invokeMethod("onAppResumed", null)
+        }, 500)
+    }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
-    // Block request code 1199 yang menyebabkan crash di NotificationListenerServicePlugin
-    if (requestCode == 1199) return
-    super.onActivityResult(requestCode, resultCode, data)
-}
-
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == 1199) return
+        super.onActivityResult(requestCode, resultCode, data)
+    }
 }

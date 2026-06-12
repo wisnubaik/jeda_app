@@ -104,8 +104,8 @@ class AppBlockerService : AccessibilityService() {
         return try {
             // Start overlay service dari plugin flutter_overlay_window
             val overlayClass = Class.forName(
-                "com.example.flutter_overlay_window.OverlayService"
-            )
+    "flutter.overlay.window.flutter_overlay_window.OverlayService"
+)
             val intent = Intent(applicationContext, overlayClass)
             applicationContext.startService(intent)
             true
