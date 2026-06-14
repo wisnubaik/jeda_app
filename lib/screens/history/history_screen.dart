@@ -3,19 +3,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:jeda_app/services/app_provider.dart';
 
-const _systemPackages = {
-  'android',
-  'com.android.systemui',
-  'com.wishnotregret.berijeda',
-  'com.wishnotregret.jeda_app',
-  'com.google.android.launcher',
-  'com.android.launcher3',
-  'com.transsion.settings.wifi',
-  'com.transsion.resolver',
-  'com.android.settings',
-  'com.coloros.securitypermission',
-};
-
 const _knownAppNames = {
   'com.instagram.android': 'Instagram',
   'org.telegram.messenger': 'Telegram',
@@ -82,15 +69,29 @@ class _HistoryScreenState extends State<HistoryScreen>
   }
 
   String _categorizeBySystem(String pkg, int sysCategory) {
-    debugPrint('📂 $pkg → category: $sysCategory');
-  switch (sysCategory) {
-    case 1: return 'game';
-    case 4: return 'social';
-    case 3: return 'video';
-    case 5: return 'news';
-    default: return 'other';
+    switch (sysCategory) {
+      case 1:
+        return 'audio'; // CATEGORY_AUDIO
+      case 0:
+        return 'game'; // CATEGORY_GAME
+      case 3:
+        return 'image'; // CATEGORY_IMAGE
+      case 6:
+        return 'maps'; // CATEGORY_MAPS
+      case 5:
+        return 'news'; // CATEGORY_NEWS
+      case 7:
+        return 'productivity'; // CATEGORY_PRODUCTIVITY
+      case 8:
+        return 'accessibility'; // CATEGORY_ACCESSIBILITY
+      case 4:
+        return 'social'; // CATEGORY_SOCIAL
+      case 2:
+        return 'video'; // CATEGORY_VIDEO
+      default:
+        return 'other'; // CATEGORY_UNDEFINED atau tidak diset
+    }
   }
-}
 
   Color _colorFromPkg(String pkg) {
     final hash = pkg.codeUnits.fold(0, (a, b) => a + b);
@@ -112,30 +113,65 @@ class _HistoryScreenState extends State<HistoryScreen>
 
   // ─── Kategori helper ─────────────────────────────────────────────────────
 
-  _CategorizedApps _categorize(Map<String, double> usageMap, Map<String, int> categoryMap) {
+  _CategorizedApps _categorize(
+      Map<String, double> usageMap, Map<String, int> categoryMap) {
     final social = <MapEntry<String, double>>[];
     final game = <MapEntry<String, double>>[];
     final video = <MapEntry<String, double>>[];
     final news = <MapEntry<String, double>>[];
+    final audio = <MapEntry<String, double>>[];
+    final image = <MapEntry<String, double>>[];
+    final maps = <MapEntry<String, double>>[];
+    final productivity = <MapEntry<String, double>>[];
+    final accessibility = <MapEntry<String, double>>[];
     final other = <MapEntry<String, double>>[];
 
     for (final e in usageMap.entries) {
-  if (_systemPackages.contains(e.key)) continue;
-  final cat = _categorizeBySystem(e.key, categoryMap[e.key] ?? -1);
-  switch (cat) {
-    case 'social': social.add(e); break;
-    case 'game':   game.add(e);   break;
-    case 'video':  video.add(e);  break;
-    case 'news':   news.add(e);   break;
-    default:       other.add(e);
-  }
-}
+      final sysCategory = categoryMap[e.key] ?? -1;
+      final cat = _categorizeBySystem(e.key, sysCategory);
+      switch (cat) {
+        case 'social':
+          social.add(e);
+          break;
+        case 'game':
+          game.add(e);
+          break;
+        case 'video':
+          video.add(e);
+          break;
+        case 'news':
+          news.add(e);
+          break;
+        case 'audio':
+          audio.add(e);
+          break;
+        case 'image':
+          image.add(e);
+          break;
+        case 'maps':
+          maps.add(e);
+          break;
+        case 'productivity':
+          productivity.add(e);
+          break;
+        case 'accessibility':
+          accessibility.add(e);
+          break;
+        default:
+          other.add(e);
+      }
+    }
 
     return _CategorizedApps(
       social: social..sort((a, b) => b.value.compareTo(a.value)),
       game: game..sort((a, b) => b.value.compareTo(a.value)),
       video: video..sort((a, b) => b.value.compareTo(a.value)),
       news: news..sort((a, b) => b.value.compareTo(a.value)),
+      audio: audio..sort((a, b) => b.value.compareTo(a.value)),
+      image: image..sort((a, b) => b.value.compareTo(a.value)),
+      maps: maps..sort((a, b) => b.value.compareTo(a.value)),
+      productivity: productivity..sort((a, b) => b.value.compareTo(a.value)),
+      accessibility: accessibility..sort((a, b) => b.value.compareTo(a.value)),
       other: other..sort((a, b) => b.value.compareTo(a.value)),
     );
   }
@@ -198,7 +234,8 @@ class _HistoryScreenState extends State<HistoryScreen>
                 children: [
                   _AppListTab(
                     provider: provider,
-                    categorize: (usageMap) => _categorize(usageMap, provider.appCategoryMap),
+                    categorize: (usageMap) =>
+                        _categorize(usageMap, provider.appCategoryMap),
                     colorFromPkg: _colorFromPkg,
                     displayName: _displayName,
                     formatHours: _formatHours,
@@ -221,12 +258,22 @@ class _CategorizedApps {
   final List<MapEntry<String, double>> game;
   final List<MapEntry<String, double>> video;
   final List<MapEntry<String, double>> news;
+  final List<MapEntry<String, double>> audio;
+  final List<MapEntry<String, double>> image;
+  final List<MapEntry<String, double>> maps;
+  final List<MapEntry<String, double>> productivity;
+  final List<MapEntry<String, double>> accessibility;
   final List<MapEntry<String, double>> other;
   const _CategorizedApps({
     required this.social,
     required this.game,
     required this.video,
     required this.news,
+    required this.audio,
+    required this.image,
+    required this.maps,
+    required this.productivity,
+    required this.accessibility,
     required this.other,
   });
 }
@@ -251,13 +298,20 @@ class _AppListTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cats = categorize(provider.appUsageMap);
-    final totalTime = provider.data.dailyScreenTime;
+    // sebelum: final totalTime = provider.data.dailyScreenTime;
+    final totalTime = provider.appUsageMap.entries
+        .fold(0.0, (sum, e) => sum + e.value);
 
 // Hitung total per kategori
     final socialTotal = cats.social.fold(0.0, (s, e) => s + e.value);
     final gameTotal = cats.game.fold(0.0, (s, e) => s + e.value);
     final videoTotal = cats.video.fold(0.0, (s, e) => s + e.value);
     final newsTotal = cats.news.fold(0.0, (s, e) => s + e.value);
+    final audioTotal = cats.audio.fold(0.0, (s, e) => s + e.value);
+    final imageTotal = cats.image.fold(0.0, (s, e) => s + e.value);
+    final mapsTotal = cats.maps.fold(0.0, (s, e) => s + e.value);
+    final productivityTotal = cats.productivity.fold(0.0, (s, e) => s + e.value);
+    final accessibilityTotal = cats.accessibility.fold(0.0, (s, e) => s + e.value);
     final otherTotal = cats.other.fold(0.0, (s, e) => s + e.value);
 
     return ListView(
@@ -314,6 +368,61 @@ class _AppListTab extends StatelessWidget {
           formatHours: formatHours,
         ),
         _CategorySection(
+          title: 'Audio',
+          apps: cats.audio,
+          color: const Color(0xFF06B6D4),
+          icon: Icons.headphones_rounded,
+          catTotal: audioTotal,
+          totalTime: totalTime,
+          colorFromPkg: colorFromPkg,
+          displayName: (pkg) => displayName(pkg, provider.appNameMap),
+          formatHours: formatHours,
+        ),
+        _CategorySection(
+          title: 'Foto & Gambar',
+          apps: cats.image,
+          color: const Color(0xFFF97316),
+          icon: Icons.image_rounded,
+          catTotal: imageTotal,
+          totalTime: totalTime,
+          colorFromPkg: colorFromPkg,
+          displayName: (pkg) => displayName(pkg, provider.appNameMap),
+          formatHours: formatHours,
+        ),
+        _CategorySection(
+          title: 'Peta & Navigasi',
+          apps: cats.maps,
+          color: const Color(0xFF10B981),
+          icon: Icons.map_rounded,
+          catTotal: mapsTotal,
+          totalTime: totalTime,
+          colorFromPkg: colorFromPkg,
+          displayName: (pkg) => displayName(pkg, provider.appNameMap),
+          formatHours: formatHours,
+        ),
+        _CategorySection(
+          title: 'Produktivitas',
+          apps: cats.productivity,
+          color: const Color(0xFF8B5CF6),
+          icon: Icons.work_rounded,
+          catTotal: productivityTotal,
+          totalTime: totalTime,
+          colorFromPkg: colorFromPkg,
+          displayName: (pkg) => displayName(pkg, provider.appNameMap),
+          formatHours: formatHours,
+        ),
+        _CategorySection(
+          title: 'Aksesibilitas',
+          apps: cats.accessibility,
+          color: const Color(0xFF6B7280),
+          icon: Icons.accessibility_new_rounded,
+          catTotal: accessibilityTotal,
+          totalTime: totalTime,
+          colorFromPkg: colorFromPkg,
+          displayName: (pkg) => displayName(pkg, provider.appNameMap),
+          formatHours: formatHours,
+        ),
+        _CategorySection(
           title: 'Lainnya',
           apps: cats.other,
           color: const Color(0xFFFFC107),
@@ -357,8 +466,8 @@ class _SummaryCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('Total Screen Time',
-                  style: GoogleFonts.poppins(
-                      fontSize: 12, color: Colors.white60)),
+                  style:
+                      GoogleFonts.poppins(fontSize: 12, color: Colors.white60)),
               Text(formatHours(totalTime),
                   style: GoogleFonts.poppins(
                     fontSize: 28,
@@ -371,11 +480,11 @@ class _SummaryCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text('Hari ini',
-                  style: GoogleFonts.poppins(
-                      fontSize: 11, color: Colors.white38)),
+                  style:
+                      GoogleFonts.poppins(fontSize: 11, color: Colors.white38)),
               Text('$activeApps app aktif',
-                  style: GoogleFonts.poppins(
-                      fontSize: 12, color: Colors.white60)),
+                  style:
+                      GoogleFonts.poppins(fontSize: 12, color: Colors.white60)),
             ],
           ),
         ],
@@ -492,8 +601,7 @@ class _AppItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final initial = displayName.isNotEmpty ? displayName[0].toUpperCase() : '?';
-    final percent =
-        totalTime > 0 ? (hours / totalTime).clamp(0.0, 1.0) : 0.0;
+    final percent = totalTime > 0 ? (hours / totalTime).clamp(0.0, 1.0) : 0.0;
 
     return Padding(
       padding: const EdgeInsets.only(left: 16, right: 16, bottom: 10),
@@ -580,8 +688,8 @@ class _LogDeteksiTab extends StatelessWidget {
                 style: GoogleFonts.poppins(color: Colors.grey[400])),
             const SizedBox(height: 4),
             Text('Penggunaanmu masih dalam batas aman 👍',
-                style: GoogleFonts.poppins(
-                    fontSize: 12, color: Colors.grey[300])),
+                style:
+                    GoogleFonts.poppins(fontSize: 12, color: Colors.grey[300])),
           ],
         ),
       );

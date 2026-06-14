@@ -113,19 +113,33 @@ class MainActivity : FlutterActivity() {
                 "getInstalledApps" -> {
     Thread {
         val pm = packageManager
-        val apps = pm.getInstalledApplications(0)
-        val list = apps.map { info ->
-            val category = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                info.category
-            } else {
-                -1
-            }
-            mapOf(
-                "packageName" to info.packageName,
-                "appName" to pm.getApplicationLabel(info).toString(),
-                "category" to category
-            )
+
+        // Kumpulkan semua package yang punya launcher icon
+        // (bisa dibuka user secara sadar dari home screen)
+        val launcherIntent = Intent(Intent.ACTION_MAIN, null).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
         }
+        val launchablePackages = pm
+            .queryIntentActivities(launcherIntent, 0)
+            .map { it.activityInfo.packageName }
+            .toSet()
+
+        val apps = pm.getInstalledApplications(0)
+        val list = apps
+            .filter { info -> launchablePackages.contains(info.packageName) }
+            .map { info ->
+                val category = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    info.category
+                } else {
+                    -1
+                }
+                mapOf(
+                    "packageName" to info.packageName,
+                    "appName" to pm.getApplicationLabel(info).toString(),
+                    "category" to category
+                )
+            }
+
         runOnUiThread { result.success(list) }
     }.start()
 }

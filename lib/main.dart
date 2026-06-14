@@ -14,6 +14,15 @@ import 'screens/profile/edit_profile_screen.dart';
 import 'screens/profile/settings_screen.dart';
 import 'screens/profile/about_screen.dart';
 
+// ══════════════════════════════════════════════════════════
+// GLOBAL NAVIGATOR KEY
+// Dipakai agar AppProvider bisa menampilkan dialog (pop-up
+// "SAATNYA JEDA!") dari MANA SAJA — tidak peduli halaman/route
+// mana yang sedang aktif (Dashboard, Riwayat, Settings, dll).
+// AppProvider akan import file ini untuk akses navigatorKey.
+// ══════════════════════════════════════════════════════════
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 // ==========================================
 // MESIN OVERLAY (ANTI BLACK-BAR INFINIX)
 // ==========================================
@@ -53,6 +62,13 @@ class JedaApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => AppProvider()..initialize(),
       child: MaterialApp(
+        // ══════════════════════════════════════════════════
+        // Daftarkan navigatorKey ke MaterialApp.
+        // Setelah ini, AppProvider bisa panggil:
+        //   navigatorKey.currentState!.context
+        // untuk showDialog() dari halaman manapun.
+        // ══════════════════════════════════════════════════
+        navigatorKey: navigatorKey,
         title: 'JEDA',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
