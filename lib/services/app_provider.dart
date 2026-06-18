@@ -29,9 +29,8 @@ class AppProvider extends ChangeNotifier {
   bool _initialized = false;
   bool _appNamesLoaded = false;
   bool _notifListenerActive = false;
-  Map<String, double> _appUsageMap = {}; // variabel simpan data usage per app
-  Map<String, String> _appNameMap =
-      {}; // variabel simpan data nama app per package name
+  Map<String, double> _appUsageMap = {};
+  Map<String, String> _appNameMap = {};
   Map<String, int> _appCategoryMap = {};
   Set<String> _launchablePackages = {};
 
@@ -41,15 +40,12 @@ class AppProvider extends ChangeNotifier {
   Timer? _midnightTimer;
   Timer? _pollingTimer;
 
-  // ⬇️ TAMBAH: state untuk dialog "SAATNYA JEDA!" global
-  // (sebelumnya ada di DashboardScreen sebagai _isWarningOpen)
   bool _isWarningOpen = false;
-  Timer? _snoozeTimer; // pengganti Timer lokal di _applySnooze dashboard
+  Timer? _snoozeTimer;
 
-  // ── Preferensi personalisasi alarm "Saatnya Jeda" ──
-  String _alarmSound = 'alarm'; // alarm | alarm_gentle | alarm_urgent
-  String _vibrationMode = 'pendek'; // off | pendek | panjang
-  int _motivationVariant = 0; // 0 = random, 1..N = pesan tertentu
+  String _alarmSound = 'alarm';
+  String _vibrationMode = 'pendek';
+  int _motivationVariant = 0;
 
   String get alarmSound => _alarmSound;
   String get vibrationMode => _vibrationMode;
@@ -70,7 +66,6 @@ class AppProvider extends ChangeNotifier {
     return motivationTexts[idx];
   }
 
-  // Tambah di bagian deklarasi variabel atas AppProvider:
   final Map<String, String> _logFirstDetectedTime = {};
 
   final List<Map<String, dynamic>> _detectionLogs = [];
@@ -80,7 +75,6 @@ class AppProvider extends ChangeNotifier {
       FlutterLocalNotificationsPlugin();
   static const platform = MethodChannel('com.wishnotregret.berijeda/blocker');
 
-  // Content-hash dedup: key = "pkg|title|body", value = timestamp terakhir
   final Map<String, DateTime> _notifHashTime = {};
   static const Duration _notifHashWindow = Duration(seconds: 1);
 
@@ -100,21 +94,6 @@ class AppProvider extends ChangeNotifier {
           .cast<EventUsageInfo>()
           .toList();
 
-      const ignoredPkgs = {
-        'android',
-        'com.android.systemui',
-        'com.android.phone',
-        'com.wishnotregret.berijeda',
-        'com.google.android.networkstack', // ←
-        'com.google.android.packageinstaller', // ← sudah ada di systemPackagePrefixes tapi tambah aja lah bismillah
-        'com.transsion.phonemaster', //
-        'com.transsion.systemui', //
-        'com.google.android.gms',
-        'com.heytap.market',
-        'com.coloros.weather.service',
-      };
-
-      // ← TAMBAH: hitung per package untuk debug
       final Map<String, int> countPerPkg = {};
       int count = 0;
 
@@ -127,7 +106,6 @@ class AppProvider extends ChangeNotifier {
         countPerPkg[pkg] = (countPerPkg[pkg] ?? 0) + 1;
       }
 
-      // ← TAMBAH: print per package
       countPerPkg.entries.toList()
         ..sort((a, b) => b.value.compareTo(a.value))
         ..forEach((e) => debugPrint('  📬 ${e.value}x │ ${e.key}'));
@@ -146,6 +124,11 @@ class AppProvider extends ChangeNotifier {
 
     _isLoading = true;
     notifyListeners();
+
+    // Load _launchablePackages PALING AWAL — _countMissedNotifications
+    // dan notification listener bergantung pada ini untuk filter,
+    // jika dipanggil belakangan filter akan kosong dan memblokir semua notif.
+    await _loadAppNames();
 
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
     await _notificationsPlugin.initialize(
@@ -172,11 +155,6 @@ class AppProvider extends ChangeNotifier {
       final eventCount = await _countMissedNotifications(startOfDay);
       final adjustedEventCount = (eventCount * 1.15).round();
 
-      // Sanity check: savedCount tidak boleh jauh melebihi eventCount.
-      // Jika savedCount > adjustedEventCount * 3, kemungkinan besar
-      // savedCount adalah akumulasi multi-hari yang tidak ter-reset
-      // (timer midnight mati karena app di-kill).
-      // Dalam kasus ini, percayai eventCount sebagai baseline.
       final isStale =
           savedCount > adjustedEventCount * 3 && adjustedEventCount > 5;
       _data.notifications = isStale
@@ -204,7 +182,6 @@ class AppProvider extends ChangeNotifier {
     _scheduleMidnightReset();
     _startUsagePolling();
 
-    await _loadAppNames();
     if (_hasPermission) await fetchUsageData();
 
     platform.setMethodCallHandler((call) async {
@@ -231,12 +208,11 @@ class AppProvider extends ChangeNotifier {
       NotificationListenerService.notificationsStream.listen((event) async {
         final pkg = event.packageName ?? '';
 
+        if (pkg.isEmpty || !_launchablePackages.contains(pkg)) return;
+
         final hasRemoved = event.hasRemoved ?? false;
         if (hasRemoved) return;
 
-        // ── Filter summary notif WhatsApp/Telegram (tanpa groupKey) ──
-// v0.3.5 tidak expose groupKey, jadi deteksi dari pola title.
-// Summary notif biasanya: "5 pesan baru", "3 messages", "(2)", dll.
         final title = event.title ?? '';
         final body = event.content ?? '';
         final isSummaryByPattern = RegExp(
@@ -249,9 +225,6 @@ class AppProvider extends ChangeNotifier {
           return;
         }
 
-        // ── Content-hash dedup (ganti cooldown 500ms) ──
-        // Hash = pkg + title + body. Notif SAMA persis dalam 1 detik → skip.
-        // Notif BERBEDA konten (pesan berbeda) dalam 1 detik → tetap dihitung.
         final hashKey = '$pkg|$title|$body';
         final nowTime = DateTime.now();
         final lastHashTime = _notifHashTime[hashKey];
@@ -284,7 +257,6 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Hapus channel notifikasi lama agar kombinasi suara+getaran baru terpakai ──
   Future<void> _deleteChannel(String soundKey, String vibKey) async {
     try {
       final id = 'jeda_alarm_${soundKey}_$vibKey';
@@ -358,9 +330,6 @@ class AppProvider extends ChangeNotifier {
     });
   }
 
-  // Di _scheduleMidnightReset(), sudah ada _notifHashTime.clear() ✅
-// Tambahan: cleanup entry lama setiap 30 menit agar tidak menumpuk
-// jika app jalan lama tanpa restart
   void _cleanupNotifHashMap() {
     final cutoff = DateTime.now().subtract(const Duration(minutes: 5));
     _notifHashTime.removeWhere((_, time) => time.isBefore(cutoff));
@@ -373,7 +342,7 @@ class AppProvider extends ChangeNotifier {
         await fetchUsageData();
         debugPrint('🔁 Auto-refresh usage data');
       }
-      _cleanupNotifHashMap(); // ← tambahkan ini
+      _cleanupNotifHashMap();
     });
     debugPrint('✅ Polling timer aktif (interval: 5 menit)');
   }
@@ -391,9 +360,6 @@ class AppProvider extends ChangeNotifier {
       final startOfDayMs = startOfDay.millisecondsSinceEpoch;
       final nowMs = now.millisecondsSinceEpoch;
 
-      // Untuk menangkap sesi lintas tengah malam, query dari 4 jam sebelum
-      // midnight kemarin (20:00 kemarin). Ini cukup untuk menangkap sesi
-      // malam yang paling larut sekalipun, tanpa mengambil data terlalu jauh.
       final windowStart = DateTime(now.year, now.month, now.day - 1, 20, 0, 0);
 
       const socialPackages = {
@@ -418,22 +384,14 @@ class AppProvider extends ChangeNotifier {
         'com.mojang.minecraftpe',
       };
 
-      // isSystemPackage: app dianggap "sistem" jika tidak ada di
-      // _launchablePackages (tidak punya launcher icon).
-      // Daftar ini diisi dari native saat _loadAppNames() dipanggil,
-      // dengan filter Intent.CATEGORY_LAUNCHER — tidak perlu hardcode.
       bool isSystemPackage(String pkg) {
         return !_launchablePackages.contains(pkg);
       }
 
-      // Query event dari windowStart (kemarin 20:00) sampai sekarang.
-      // queryEvents mengembalikan event individual bertimestamp — AMAN dari
-      // bug ROM OPPO yang hanya menyerang queryUsageStats (akumulasi).
       final allEvents = ((await UsageStats.queryEvents(windowStart, now)) ?? [])
           .cast<EventUsageInfo>()
           .toList();
 
-      // ════ STEP 1: Screen-off timestamps & unlock count (hari ini saja) ════
       final List<int> screenOffTimestamps = [];
       int screenUnlockCount = 0;
       for (final e in allEvents) {
@@ -442,37 +400,16 @@ class AppProvider extends ChangeNotifier {
         if (pkg != 'android') continue;
         final tsMs = int.tryParse(e.timeStamp?.toString() ?? '0') ?? 0;
         if (et == 2 || et == 15) {
-          // screen-off: hitung semua dalam window (termasuk kemarin malam)
           screenOffTimestamps.add(tsMs);
         }
         if (et == 18 && tsMs >= startOfDayMs) {
-          // unlock: hanya hitung yang terjadi hari ini
           screenUnlockCount++;
         }
       }
       debugPrint('🔓 Screen unlocks: $screenUnlockCount');
 
-      // ════ STEP 2: Event-based duration ════
-      //
-      // Dua kategori sesi yang dihitung untuk hari ini:
-      //
-      // A) Sesi murni hari ini: FOREGROUND >= startOfDayMs
-      //    Dihitung seperti biasa.
-      //
-      // B) Sesi lintas tengah malam: FOREGROUND kemarin (dalam window 20:00-
-      //    23:59), BACKGROUND >= startOfDayMs (setelah midnight)
-      //    Hanya durasi yang jatuh SETELAH midnight yang dihitung untuk hari ini.
-      //    Syarat ketat: tidak boleh ada screen-off antara FOREGROUND dan
-      //    BACKGROUND — jika ada, sesi terputus dan tidak dihitung.
-      //
-      // Event 23 (ACTIVITY_RESUMED) tetap dibuang — hanya type 1 dan 2.
-
-      final Map<String, int> foregroundStart = {}; // pkg → timestamp FOREGROUND
-      final Map<String, double> eventsDuration = {}; // durasi hari ini per app
-
-      // appsWithActivityToday: app yang benar-benar punya FOREGROUND atau
-      // sesi lintas midnight yang valid HARI INI. Dipakai untuk filter
-      // _appUsageMap agar app yang tidak aktif hari ini tidak muncul.
+      final Map<String, int> foregroundStart = {};
+      final Map<String, double> eventsDuration = {};
       final Set<String> appsWithActivityToday = {};
 
       for (final e in allEvents) {
@@ -484,29 +421,18 @@ class AppProvider extends ChangeNotifier {
         final tsMs = int.tryParse(e.timeStamp?.toString() ?? '0') ?? 0;
 
         if (et == 1) {
-          // FOREGROUND: catat timestamp (bisa dari kemarin maupun hari ini)
           foregroundStart[pkg] = tsMs;
         } else if (et == 2) {
-          // BACKGROUND
           final startMs = foregroundStart[pkg];
-          if (startMs == null)
-            continue; // tidak ada FOREGROUND sebelumnya → skip
+          if (startMs == null) continue;
 
           if (startMs >= startOfDayMs) {
-            // ── Kasus A: Sesi murni hari ini ──
-            // FOREGROUND dan BACKGROUND keduanya hari ini.
             final duration = tsMs - startMs;
             if (duration > 0 && duration <= 7200000) {
               eventsDuration[pkg] = (eventsDuration[pkg] ?? 0) + duration;
               appsWithActivityToday.add(pkg);
             }
           } else if (tsMs >= startOfDayMs) {
-            // ── Kasus B: Sesi lintas tengah malam ──
-            // FOREGROUND kemarin (dalam window), BACKGROUND hari ini.
-            //
-            // Validasi: tidak boleh ada screen-off antara FOREGROUND dan
-            // BACKGROUND. Jika ada screen-off, berarti HP mati di tengah sesi
-            // → sesi terputus → hanya hitung sampai screen-off pertama.
             final screenOffBetween = screenOffTimestamps
                 .where((t) => t > startMs && t < tsMs)
                 .toList()
@@ -514,20 +440,13 @@ class AppProvider extends ChangeNotifier {
 
             final int effectiveEnd;
             if (screenOffBetween.isNotEmpty) {
-              // Ada screen-off → sesi berakhir saat screen-off pertama.
-              // Hanya hitung bagian setelah midnight sampai screen-off pertama.
-              // Jika screen-off sebelum midnight, tidak ada durasi hari ini.
               effectiveEnd = screenOffBetween.first;
             } else {
-              // Tidak ada screen-off → sesi tidak terputus, hitung penuh.
               effectiveEnd = tsMs;
             }
 
-            // Bagian yang jatuh setelah midnight = effectiveEnd - startOfDayMs
             if (effectiveEnd > startOfDayMs) {
               final durationToday = effectiveEnd - startOfDayMs;
-              // Batas wajar: sesi lintas midnight tidak boleh > 4 jam hari ini
-              // (jika user tidur sambil buka app, biasanya tidak lama)
               if (durationToday > 0 && durationToday <= 14400000) {
                 eventsDuration[pkg] =
                     (eventsDuration[pkg] ?? 0) + durationToday;
@@ -537,30 +456,19 @@ class AppProvider extends ChangeNotifier {
               }
             }
           }
-          // BACKGROUND < startOfDayMs: sesi selesai kemarin → tidak dihitung.
           foregroundStart.remove(pkg);
         }
       }
 
-      // ════ STEP 3: Sesi aktif (FOREGROUND tanpa BACKGROUND) ════
-      //
-      // Syarat ketat agar tidak phantom:
-      // (a) Tidak ada screen-off setelah FOREGROUND dimulai.
-      // (b) Jika FOREGROUND dari kemarin (lintas midnight): durasi hari ini
-      //     dihitung dari startOfDayMs sampai sekarang, max 30 menit.
-      // (c) Jika FOREGROUND hari ini: durasi dari FOREGROUND sampai sekarang,
-      //     max 30 menit.
       foregroundStart.forEach((pkg, startMs) {
-        // Cek screen-off setelah FOREGROUND dimulai
         final hasScreenOffAfterStart =
             screenOffTimestamps.any((t) => t > startMs);
-        if (hasScreenOffAfterStart) return; // layar sudah mati → skip
+        if (hasScreenOffAfterStart) return;
 
         final int effectiveStart =
             startMs < startOfDayMs ? startOfDayMs : startMs;
         final duration = nowMs - effectiveStart;
 
-        // Max 30 menit untuk sesi aktif (heuristik anti-phantom)
         if (duration > 0 && duration <= 1800000) {
           eventsDuration[pkg] =
               (eventsDuration[pkg] ?? 0) + duration.toDouble();
@@ -568,18 +476,10 @@ class AppProvider extends ChangeNotifier {
         }
       });
 
-      // Debug
       eventsDuration.forEach((pkg, ms) {
         debugPrint('  📱 events: ${(ms / 3600000).toStringAsFixed(2)}j │ $pkg');
       });
 
-      // ════ STEP 4: queryUsageStats — referensi debug saja ════
-      //
-      // Tidak dipakai untuk rekonsiliasi. ROM OPPO/ColorOS terkonfirmasi
-      // mengembalikan data akumulasi multi-hari dari queryUsageStats, sehingga
-      // tidak bisa dipercaya untuk menentukan apakah app dipakai hari ini.
-      // queryEvents (dipakai di atas) tidak memiliki bug ini karena
-      // mengembalikan event individual bertimestamp, bukan akumulasi.
       double queryStatsTotalMs = 0;
       try {
         final usageStatsList =
@@ -604,8 +504,6 @@ class AppProvider extends ChangeNotifier {
         debugPrint('⚠️ queryUsageStats error: $e');
       }
 
-      // ════ STEP 5: Rekonsiliasi ════
-      // Sumber tunggal: eventsDuration, hanya app di appsWithActivityToday.
       double reconciledTotal = 0;
       double reconciledSocial = 0;
       double reconciledGaming = 0;
@@ -624,7 +522,6 @@ class AppProvider extends ChangeNotifier {
       debugPrint(
           '⚖️ Rekonsiliasi: ${(reconciledTotal / 3600000).toStringAsFixed(2)}j');
 
-      // Update _appUsageMap
       _appUsageMap = {};
       for (final pkg in appsWithActivityToday) {
         if (isSystemPackage(pkg)) continue;
@@ -636,9 +533,6 @@ class AppProvider extends ChangeNotifier {
         }
       }
 
-      // ════ NIGHT USAGE ════
-      // Night usage dihitung dari window penuh (termasuk kemarin malam)
-      // karena periode malam melintasi midnight.
       double nightScreenMs = 0.0;
       final nightStart1 = DateTime(now.year, now.month, now.day - 1, 22, 0, 0);
       final nightEnd1 = DateTime(now.year, now.month, now.day, 5, 0, 0);
@@ -674,10 +568,6 @@ class AppProvider extends ChangeNotifier {
 
       foregroundTimestamp.forEach((pkg, startMs) {
         if (startMs == null) return;
-        // Validasi: jika ada screen-off setelah FOREGROUND dimulai,
-        // gunakan screen-off pertama sebagai batas akhir sesi,
-        // bukan 'now'. Ini mencegah phantom sesi dari kemarin 20:00
-        // terhitung sampai sekarang (bisa 7+ jam).
         final screenOffAfter =
             screenOffTimestamps.where((t) => t > startMs).toList()..sort();
         final effectiveEnd = screenOffAfter.isNotEmpty
@@ -734,11 +624,9 @@ class AppProvider extends ChangeNotifier {
     final timeStr =
         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
 
-    // Jangan duplikat — cek dulu apakah log sejenis sudah ada
     void addLog(String key, Map<String, dynamic> log) {
       final exists = _detectionLogs.any((l) => l['key'] == key);
       if (!exists) {
-        // Catat waktu PERTAMA kali kondisi ini terpenuhi
         if (!_logFirstDetectedTime.containsKey(key)) {
           _logFirstDetectedTime[key] = timeStr;
         }
@@ -747,80 +635,80 @@ class AppProvider extends ChangeNotifier {
       }
     }
 
-    // 1. Status model
-    if (_prediction == 2) {
-      addLog('status_bahaya', {
-        'title': 'Status: BAHAYA',
+    // ─── LOG 1: Status Model (Kwon et al., 2013 — SAS-SV) ───────────────────
+    // Trigger: _prediction == 1 (at risk/addicted berdasarkan SAS-SV)
+    // Kwon hanya menghasilkan 2 label (0 = normal, 1 = at risk/addicted).
+    if (_prediction == 1) {
+      addLog('status_adiksi', {
+        'title': 'Terdeteksi Risiko Adiksi Smartphone',
         'desc':
-            'Model deteksi menunjukkan pola penggunaan berisiko tinggi berdasarkan durasi, sesi, dan notifikasi harian.',
+            'Pola penggunaan harianmu (durasi layar, frekuensi buka HP, dan notifikasi) menunjukkan indikasi adiksi smartphone berdasarkan Smartphone Addiction Scale — Short Version.',
         'color': const Color(0xFFEF4444),
         'icon': Icons.warning_rounded,
-        'source': 'Kwon et al., 2013 — SAS-SV',
+        'source': 'Kwon et al., 2013 — SAS-SV (PLoS ONE). '
+            'DOI: 10.1371/journal.pone.0083558',
       });
-      _detectionLogs.removeWhere((l) => l['key'] == 'status_waspada');
-    } else if (_prediction == 1) {
-      addLog('status_waspada', {
-        'title': 'Status: WASPADA',
-        'desc':
-            'Penggunaan mendekati batas risiko. Kurangi durasi layar sebelum meningkat ke kategori bahaya.',
-        'color': const Color(0xFFFFC107),
-        'icon': Icons.info_rounded,
-        'source': 'Kwon et al., 2013 — SAS-SV',
-      });
-      _detectionLogs.removeWhere((l) => l['key'] == 'status_bahaya');
     } else {
-      // Kembali aman — hapus status
-      _detectionLogs.removeWhere(
-          (l) => l['key'] == 'status_bahaya' || l['key'] == 'status_waspada');
+      _detectionLogs.removeWhere((l) => l['key'] == 'status_adiksi');
     }
 
-    // 2. Dominasi sosial media
-    if (_data.dailyScreenTime > 0 &&
-        (_data.socialMediaUsage / _data.dailyScreenTime) > 0.5) {
-      addLog('dominasi_sosmed', {
-        'title': 'Dominasi Sosial Media',
+    // ─── LOG 2: Sosial Media Berlebihan ──────────────────────────────────────
+    // Trigger: socialMediaUsage > 5.0 jam/hari
+    // Landasan: Sert, Ünsal, Can (2026) — penggunaan sosmed ≥5 jam/hari
+    // dikaitkan dengan skor adiksi lebih tinggi pada remaja SMA (n=858).
+    if (_data.socialMediaUsage > 5.0) {
+      addLog('sosmed_berlebihan', {
+        'title': 'Penggunaan Sosial Media Berlebihan',
         'desc':
-            'Lebih dari 50% waktu layarmu digunakan untuk sosial media. Remaja yang menggunakan sosmed >3 jam/hari berisiko lebih tinggi mengalami depresi dan kecemasan.',
+            'Penggunaan sosial media hari ini melebihi 5 jam. Remaja yang menggunakan sosial media ≥5 jam per hari menunjukkan skor adiksi smartphone yang lebih tinggi.',
         'color': const Color(0xFFEC4899),
         'icon': Icons.tag_rounded,
-        'source': 'Springer Nature, 2025',
+        'source': 'Sert, Ünsal, Can, 2026 — J Community Health. '
+            'DOI: 10.1007/s10900-026-01578-7',
       });
+    } else {
+      _detectionLogs.removeWhere((l) => l['key'] == 'sosmed_berlebihan');
     }
 
-    // 3. Penggunaan malam
-    if (_data.nightUsage > 0.5) {
-      _detectionLogs.removeWhere((l) => l['key'] == 'aktivitas_malam');
-      addLog('malam_berlebihan', {
-        'title': 'Penggunaan Malam Berlebihan',
+    // ─── LOG 3: Screen Time Tinggi ───────────────────────────────────────────
+    // Trigger: dailyScreenTime > 4.0 jam/hari
+    // Landasan: Francisquini et al. (2024) — screen time >4 jam/hari
+    // dikaitkan dengan peningkatan gejala depresi, kecemasan, dan stres
+    // pada remaja (n=1.627, Brazil).
+    if (_data.dailyScreenTime > 4.0) {
+      addLog('screen_time_tinggi', {
+        'title': 'Screen Time Harian Tinggi',
         'desc':
-            'Terdeteksi penggunaan smartphone >30 menit setelah pukul 22:00. Berkaitan dengan gangguan tidur dan penurunan kesehatan mental remaja.',
+            'Total waktu layar hari ini melebihi 4 jam. Penggunaan layar lebih dari 4 jam per hari berkaitan dengan peningkatan gejala depresi, kecemasan, dan stres pada remaja.',
+        'color': const Color(0xFFF97316),
+        'icon': Icons.phonelink_rounded,
+        'source': 'Francisquini et al., 2024 — Revista Paulista de Pediatria. '
+            'DOI: 10.1590/1984-0462/2025/43/2023250',
+      });
+    } else {
+      _detectionLogs.removeWhere((l) => l['key'] == 'screen_time_tinggi');
+    }
+
+    // ─── LOG 4: Penggunaan Malam ─────────────────────────────────────────────
+    // Trigger: nightUsage > 2.3 jam (di atas rata-rata durasi pakai HP
+    // di tempat tidur pada remaja menurut Bozkurt et al., 2024)
+    // Landasan: Bozkurt et al. (2024) — durasi penggunaan smartphone di
+    // tempat tidur rata-rata 2,3 jam/hari; durasi lebih panjang berkaitan
+    // positif dengan kualitas tidur buruk pada remaja usia 13–18 tahun.
+    // nightUsage di sini = total durasi pakai HP antara 22:00–05:00
+    // (proxy operasional untuk "penggunaan HP saat waktu tidur").
+    if (_data.nightUsage > 2.3) {
+      addLog('penggunaan_malam', {
+        'title': 'Penggunaan Smartphone Malam Hari Tinggi',
+        'desc':
+            'Penggunaan smartphone antara pukul 22:00–05:00 melebihi 2,3 jam. Durasi penggunaan HP di waktu tidur yang melebihi rata-rata remaja berkaitan dengan kualitas tidur yang lebih buruk.',
         'color': const Color(0xFF6366F1),
         'icon': Icons.nightlight_rounded,
-        'source':
-            'Swedish Public Health Agency, 2024; Journal of Adolescence, 2024',
+        'source': 'Bozkurt et al., 2024 — Eurasian Journal of Medicine. '
+            'DOI: 10.5152/eurasianjmed.2024.23379',
       });
-    } else if (_data.nightUsage > 0.0) {
-      _detectionLogs.removeWhere((l) => l['key'] == 'malam_berlebihan');
-      addLog('aktivitas_malam', {
-        'title': 'Aktivitas Malam Terdeteksi',
-        'desc':
-            'Terdeteksi penggunaan smartphone setelah pukul 22:00. Hindari layar minimal 1 jam sebelum tidur.',
-        'color': const Color(0xFF8B5CF6),
-        'icon': Icons.nightlight_outlined,
-        'source': 'Swedish Public Health Agency, 2024',
-      });
-    }
-
-    // 4. Sosial media di malam hari
-    if (_data.nightUsage > 0.3 && _data.socialMediaUsage > 1.0) {
-      addLog('sosmed_malam', {
-        'title': 'Sosial Media di Malam Hari',
-        'desc':
-            'Kombinasi penggunaan sosmed tinggi dan aktif di malam hari secara khusus berkaitan dengan gangguan tidur dan depresi pada remaja di 18 negara.',
-        'color': const Color(0xFFF97316),
-        'icon': Icons.bedtime_rounded,
-        'source': 'Sleep Health Journal, 2023',
-      });
+    } else {
+      _detectionLogs.removeWhere((l) => l['key'] == 'penggunaan_malam');
     }
   }
 
@@ -852,7 +740,6 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> openUsageSettings() async {
-    // Panggil native supaya flag _waitingForPermission di-set dulu
     try {
       await platform.invokeMethod('openUsageSettings');
     } catch (_) {
@@ -865,7 +752,6 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> openNotificationSettings() async {
-    // Buka settings manual, hindari bug double-reply di v0.3.5
     try {
       await platform.invokeMethod('openNotificationSettings');
     } catch (_) {}
@@ -885,9 +771,8 @@ class AppProvider extends ChangeNotifier {
       _hasPermission = false;
     }
 
-    debugPrint(
-        '🔑 hasPermission setelah resume: $_hasPermission'); // ← sudah ada
-    debugPrint('🔑 initialized: $_initialized'); // ← tambah ini
+    debugPrint('🔑 hasPermission setelah resume: $_hasPermission');
+    debugPrint('🔑 initialized: $_initialized');
 
     if (_hasPermission) {
       try {
@@ -898,7 +783,7 @@ class AppProvider extends ChangeNotifier {
     }
 
     notifyListeners();
-    debugPrint('🔔 notifyListeners dipanggil'); // ← tambah ini
+    debugPrint('🔔 notifyListeners dipanggil');
   }
 
   Future<void> requestPermission() async {
@@ -1020,8 +905,6 @@ class AppProvider extends ChangeNotifier {
         pattern = Int64List.fromList([0, 1000, 500, 1000, 500, 1000]);
       }
 
-      // Channel ID unik per kombinasi suara+getaran karena setting
-      // channel Android bersifat immutable setelah dibuat.
       final channelId = 'jeda_alarm_${_alarmSound}_$_vibrationMode';
 
       await _notificationsPlugin.show(
@@ -1095,13 +978,9 @@ class AppProvider extends ChangeNotifier {
         for (final app in apps)
           (app['packageName'] as String): (app['category'] as int? ?? -1)
       };
-      // _launchablePackages diisi dari hasil filter native (hanya app
-      // yang punya launcher icon). isSystemPackage() pakai ini sebagai
-      // satu-satunya sumber kebenaran — tidak perlu daftar hardcode lagi.
       _launchablePackages = {
         for (final app in apps) (app['packageName'] as String)
       };
-      // Selalu exclude app Jeda sendiri dari perhitungan screen time
       _launchablePackages.remove('com.wishnotregret.berijeda');
       _appNamesLoaded = true;
       debugPrint('✅ App names loaded: ${_appNameMap.length} apps');
@@ -1109,10 +988,6 @@ class AppProvider extends ChangeNotifier {
       _appNamesLoaded = true;
       debugPrint('❌ Gagal load app names: $e');
     }
-  }
-
-  String _getAppName(String pkg) {
-    return _appNameMap[pkg] ?? pkg.split('.').last;
   }
 
   void updateData({
@@ -1144,23 +1019,23 @@ class AppProvider extends ChangeNotifier {
       debugPrint('   notif       : ${_data.notifications}x');
 
       final result = _model!.predict([
-        _data.dailyScreenTime, // features[0]: screen_time (jam)
-        _data.appSessions.toDouble(), // features[1]: unlocks (kali)
-        _data.notifications.toDouble(), // features[2]: notif (kali)
+        _data.dailyScreenTime,
+        _data.appSessions.toDouble(),
+        _data.notifications.toDouble(),
       ]);
       _prediction = result['prediction'];
       _addictionProb = result['probability'];
-      _generateDetectionLogs();
 
       debugPrint('🧠 Prediksi: $_prediction | Prob: $_addictionProb');
       debugPrint('   Input: screen=${_data.dailyScreenTime.toStringAsFixed(2)}j'
           ' | unlocks=${_data.appSessions}'
           ' | notif=${_data.notifications}');
     } else {
-      // Fallback jika model gagal load
       _prediction = _data.dailyScreenTime > 5.0 ? 1 : 0;
       _addictionProb = _prediction == 1 ? 0.88 : 0.15;
     }
+
+    _generateDetectionLogs();
 
     if (_prediction == 1 && _isMonitoringEnabled) {
       Future.delayed(
@@ -1171,40 +1046,32 @@ class AppProvider extends ChangeNotifier {
       _syncBlockerToNative(false);
     }
 
-    // ⬇️ TAMBAH: setiap kali prediksi selesai dihitung, cek apakah
-    // perlu menampilkan dialog "SAATNYA JEDA!" — dialog ini sekarang
-    // global (bisa muncul di halaman manapun, bukan cuma Dashboard).
     _checkAndShowWarning();
   }
 
-  // ════════════════════════════════════════════════════════
-  // ⬇️ TAMBAH: BAGIAN DIALOG GLOBAL "SAATNYA JEDA!"
-  // Dipindah dari DashboardScreen agar bisa muncul di semua halaman.
-  // ════════════════════════════════════════════════════════
-
-  // Cek apakah dialog perlu ditampilkan, dengan cek snooze dulu.
   void _checkAndShowWarning() async {
     if (_prediction != 1 || !_isMonitoringEnabled || _isWarningOpen) return;
 
-    final prefs = await SharedPreferences.getInstance();
-    final snoozeStr = prefs.getString('snooze_until');
-    if (snoozeStr != null) {
-      final snoozeTime = DateTime.parse(snoozeStr);
-      if (DateTime.now().isBefore(snoozeTime)) return;
+    // Cek snooze dari native (JedaPrefs key: snoozeUntil, tipe Long/ms)
+    // — bukan dari SharedPreferences Flutter, karena setSnooze disimpan
+    // di sisi Kotlin via getSharedPreferences("JedaPrefs").
+    try {
+      final snoozeUntilMs =
+          await platform.invokeMethod<int>('getSnoozeUntil') ?? 0;
+      if (DateTime.now().millisecondsSinceEpoch < snoozeUntilMs) return;
+    } catch (_) {
+      // Jika native tidak support method ini, lanjut tanpa cek snooze
     }
 
-    // Bunyikan notif alarm bersamaan dengan pop-up
     showNotificationAlert();
 
     _isWarningOpen = true;
     _showGlobalWarningDialog();
   }
 
-  // Tampilkan dialog "SAATNYA JEDA!" menggunakan navigatorKey global,
-  // sehingga muncul di atas halaman apapun yang sedang aktif.
   void _showGlobalWarningDialog() {
     final ctx = navigatorKey.currentState?.context;
-    if (ctx == null) return; // navigator belum siap, batalkan
+    if (ctx == null) return;
 
     showDialog(
       context: ctx,
@@ -1233,33 +1100,12 @@ class AppProvider extends ChangeNotifier {
                       letterSpacing: 0.5)),
               const SizedBox(height: 16),
               Text(
-                getMotivationText(), // pesan motivasi acak/sesuai pilihan user
+                getMotivationText(),
                 textAlign: TextAlign.center,
                 style: GoogleFonts.poppins(
                     fontSize: 14, color: Colors.grey[600], height: 1.5),
               ),
               const SizedBox(height: 32),
-
-              // TOMBOL 5 DETIK
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFF59E0B),
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24))),
-                  onPressed: () => _applySnooze(dialogContext, 5),
-                  child: Text('Ingatkan 5 Detik Lagi',
-                      style: GoogleFonts.poppins(
-                          fontWeight: FontWeight.w600, fontSize: 14)),
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              // TOMBOL 10 DETIK
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
@@ -1277,8 +1123,6 @@ class AppProvider extends ChangeNotifier {
                 ),
               ),
               const SizedBox(height: 12),
-
-              // TOMBOL 1 MENIT
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton(
@@ -1288,15 +1132,13 @@ class AppProvider extends ChangeNotifier {
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(24))),
-                  onPressed: () => _applySnooze(dialogContext, 60),
-                  child: Text('Ingatkan 1 Menit Lagi',
+                  onPressed: () => _applySnooze(dialogContext, 600),
+                  child: Text('Ingatkan 10 Menit Lagi',
                       style: GoogleFonts.poppins(
                           fontWeight: FontWeight.w600, fontSize: 14)),
                 ),
               ),
               const SizedBox(height: 28),
-
-              // MATIKAN MONITORING HARI INI
               GestureDetector(
                 onTap: () async {
                   _isWarningOpen = false;
@@ -1334,28 +1176,23 @@ class AppProvider extends ChangeNotifier {
     );
   }
 
-  // Logic snooze — dipindah dari _applySnooze di DashboardScreen.
-  // Sekarang menerima dialogContext (bukan context dashboard) agar
-  // Navigator.pop menutup DIALOG, bukan halaman.
   Future<void> _applySnooze(BuildContext dialogContext, int seconds) async {
     _isWarningOpen = false;
 
-    // Ambil ScaffoldMessenger SEBELUM pop (sesuai fix sebelumnya),
-    // dari navigatorKey context (selalu hidup), bukan dialogContext.
     final ctx = navigatorKey.currentState?.context;
     final messenger = ctx != null ? ScaffoldMessenger.of(ctx) : null;
 
-    Navigator.pop(dialogContext); // tutup dialog
+    Navigator.pop(dialogContext);
 
     await applySnoozeNative(seconds);
 
     if (messenger != null) {
+      final label = seconds >= 60 ? '${seconds ~/ 60} menit' : '$seconds detik';
       messenger.showSnackBar(
-        SnackBar(content: Text('Jeda ditunda $seconds detik. Waktu dimulai!')),
+        SnackBar(content: Text('Jeda ditunda $label. Waktu dimulai!')),
       );
     }
 
-    // Timer: saat snooze habis, cek ulang apakah masih dalam kondisi bahaya
     _snoozeTimer?.cancel();
     _snoozeTimer = Timer(Duration(seconds: seconds), () async {
       if (_isMonitoringEnabled && _prediction == 1) {
