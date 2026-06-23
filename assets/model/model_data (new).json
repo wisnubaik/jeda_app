@@ -4,31 +4,31 @@
     1
   ],
   "priors": [
-    0.449153,
-    0.550847
+    0.44186,
+    0.55814
   ],
   "means": [
     [
-      1.679778,
-      3.286275,
-      4.481391
+      5.490351,
+      49.210526,
+      162.131579
     ],
     [
-      2.121757,
-      4.35138,
-      4.993921
+      7.947569,
+      87.083333,
+      205.0
     ]
   ],
   "variances": [
     [
-      0.212578,
-      0.967516,
-      1.097422
+      7.94198,
+      2761.692562,
+      45191.061675
     ],
     [
-      0.291441,
-      0.638989,
-      0.918268
+      19.612992,
+      3486.70143,
+      36899.125041
     ]
   ],
   "features": [
@@ -36,18 +36,17 @@
     "unlocks",
     "notif"
   ],
-  "feature_transform": "log1p",
   "metadata": {
     "dataset": "SMP Negeri 1 Sambong",
     "ground_truth": "SAS-SV (Kwon et al., 2013)",
     "cutoff_male": 31,
     "cutoff_female": 33,
-    "n_samples": 118,
-    "n_class_0": 53,
-    "n_class_1": 65,
-    "cv_accuracy": 0.7377,
-    "cv_f1": 0.7555,
-    "cv_roc_auc": 0.8127,
+    "n_samples": 86,
+    "n_class_0": 38,
+    "n_class_1": 48,
+    "cv_accuracy": 0.6261,
+    "cv_f1": 0.6017,
+    "cv_roc_auc": 0.6708,
     "algorithm": "Gaussian Naive Bayes"
   }
 }

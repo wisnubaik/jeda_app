@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'package:workmanager/workmanager.dart';
 import 'widgets/jeda_overlay_widget.dart';
 import 'services/app_provider.dart';
 import 'screens/splash_screen.dart';
@@ -13,6 +14,7 @@ import 'screens/profile/profile_screen.dart';
 import 'screens/profile/edit_profile_screen.dart';
 import 'screens/profile/settings_screen.dart';
 import 'screens/profile/about_screen.dart';
+
 
 // ══════════════════════════════════════════════════════════
 // GLOBAL NAVIGATOR KEY
@@ -50,6 +52,14 @@ void main() async {
   // ✅ FIX: Matikan pengunduhan font dari internet agar tidak error saat offline
   // Font akan otomatis fallback ke font sistem jika belum di-cache
   GoogleFonts.config.allowRuntimeFetching = false;
+
+  // ══════════════════════════════════════════════════════════
+  // WORKMANAGER INIT
+  // Daftarkan callback dispatcher (didefinisikan di app_provider.dart)
+  // supaya task periodik tahu fungsi mana yang harus dijalankan
+  // saat dipanggil sistem Android di background.
+  // ══════════════════════════════════════════════════════════
+  await Workmanager().initialize(callbackDispatcher);
 
   runApp(const JedaApp());
 }

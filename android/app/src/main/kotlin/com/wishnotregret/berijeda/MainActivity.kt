@@ -117,6 +117,23 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
 
+                "startForegroundService" -> {
+                    val serviceIntent = Intent(this, JedaForegroundService::class.java)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(serviceIntent)
+                    } else {
+                        startService(serviceIntent)
+                    }
+                    result.success(null)
+                }
+
+                "stopForegroundService" -> {
+                    val serviceIntent = Intent(this, JedaForegroundService::class.java)
+                    serviceIntent.action = JedaForegroundService.ACTION_STOP
+                    startService(serviceIntent)
+                    result.success(null)
+                }
+
                 "getInstalledApps" -> {
                     Thread {
                         val pm = packageManager

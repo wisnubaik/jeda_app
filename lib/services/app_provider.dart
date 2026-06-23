@@ -8,12 +8,55 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart'
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:usage_stats/usage_stats.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
+import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/usage_data.dart';
 import '../models/naive_bayes_model.dart';
 import 'package:flutter/material.dart';
 import '../main.dart';
 import 'package:google_fonts/google_fonts.dart';
+
+// ══════════════════════════════════════════════════════════
+// WORKMANAGER CALLBACK DISPATCHER
+// Wajib top-level function (bukan method di dalam class),
+// karena dijalankan di background isolate terpisah oleh
+// WorkManager Android. Tugasnya: jalankan ulang fetchUsageData()
+// + _runPrediction() yang SUDAH ADA, tanpa logic baru.
+// ══════════════════════════════════════════════════════════
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  WidgetsFlutterBinding.ensureInitialized();
+  Workmanager().executeTask((task, inputData) async {
+    try {
+      final provider = AppProvider();
+      await provider._loadAppNames();
+
+      // Muat notif_count yang sudah tersimpan dari sesi UI sebelumnya,
+      // supaya instance AppProvider baru ini tidak mulai dari 0.
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        provider._data.notifications = prefs.getInt('notif_count') ?? 0;
+      } catch (e) {
+        debugPrint('❌ Gagal load notif_count di background: $e');
+      }
+
+      bool hasPermission = false;
+      try {
+        hasPermission = (await UsageStats.checkUsagePermission()) ?? false;
+      } catch (_) {}
+
+      if (hasPermission) {
+        await provider.fetchUsageData();
+        debugPrint('✅ WorkManager: fetchUsageData selesai di background');
+      } else {
+        debugPrint('⚠️ WorkManager: permission belum ada, skip fetch');
+      }
+    } catch (e) {
+      debugPrint('❌ WorkManager task gagal: $e');
+    }
+    return Future.value(true);
+  });
+}
 
 class AppProvider extends ChangeNotifier {
   UsageData _data = UsageData();
@@ -179,6 +222,32 @@ class AppProvider extends ChangeNotifier {
     }
 
     _listenOverlayEvents();
+    // Mulai foreground service agar app tetap aktif memantau
+    // di background dan tidak dikill sistem.
+    try {
+      await platform.invokeMethod('startForegroundService');
+    } catch (e) {
+      debugPrint('❌ Gagal start foreground service: $e');
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // WORKMANAGER — daftarkan task periodik (min. 15 menit, batas
+    // Android) yang menjalankan ulang fetchUsageData() di background,
+    // supaya kondisi blocking tidak "membeku" lama setelah HP restart
+    // tanpa app dibuka. Pakai existingWorkPolicy.replace supaya tidak
+    // dobel-daftar tiap kali initialize() jalan.
+    try {
+      await Workmanager().registerPeriodicTask(
+        'jeda_periodic_fetch',
+        'fetchUsageDataTask',
+        frequency: const Duration(minutes: 15),
+        existingWorkPolicy: ExistingWorkPolicy.replace,
+      );
+      debugPrint('✅ WorkManager periodic task terdaftar');
+    } catch (e) {
+      debugPrint('❌ Gagal daftarkan WorkManager task: $e');
+    }
+
     _scheduleMidnightReset();
     _startUsagePolling();
 
@@ -824,6 +893,14 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> stopForegroundService() async {
+    try {
+      await platform.invokeMethod('stopForegroundService');
+    } catch (e) {
+      debugPrint('❌ Gagal stop foreground service: $e');
+    }
+  }
+
   Future<void> setMonitoring(bool value) async {
     _isMonitoringEnabled = value;
     notifyListeners();
@@ -843,6 +920,14 @@ class AppProvider extends ChangeNotifier {
   Future<void> _syncBlockerToNative(bool status) async {
     try {
       await platform.invokeMethod('setBlockingStatus', {'status': status});
+    } on MissingPluginException catch (_) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('isBlockingActive_bg', status);
+        debugPrint('✅ Sync native (fallback background): $status');
+      } catch (e2) {
+        debugPrint('❌ Fallback sync native gagal: $e2');
+      }
     } on PlatformException catch (e) {
       debugPrint('❌ Sync native: ${e.message}');
     }
@@ -931,30 +1016,6 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> showOverlayAlert() async {
-    if (!_isMonitoringEnabled) return;
-    try {
-      if (!await FlutterOverlayWindow.isPermissionGranted()) {
-        await FlutterOverlayWindow.requestPermission();
-        return;
-      }
-      if (!await FlutterOverlayWindow.isActive()) {
-        await FlutterOverlayWindow.showOverlay(
-          enableDrag: false,
-          overlayTitle: 'SAATNYA JEDA!',
-          overlayContent: 'Penggunaanmu sudah berlebihan.',
-          flag: OverlayFlag.defaultFlag,
-          visibility: NotificationVisibility.visibilityPublic,
-          positionGravity: PositionGravity.auto,
-          height: 500,
-          width: WindowSize.matchParent,
-        );
-      }
-    } catch (e) {
-      debugPrint('❌ Overlay: $e');
-    }
-  }
-
   Future<void> resetDailyData() async {
     _detectionLogs.clear();
     _data = UsageData();
@@ -984,9 +1045,31 @@ class AppProvider extends ChangeNotifier {
       _launchablePackages.remove('com.wishnotregret.berijeda');
       _appNamesLoaded = true;
       debugPrint('✅ App names loaded: ${_appNameMap.length} apps');
+
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setStringList(
+          'cached_launchable_packages',
+          _launchablePackages.toList(),
+        );
+      } catch (e) {
+        debugPrint('❌ Gagal cache launchable packages: $e');
+      }
     } catch (e) {
       _appNamesLoaded = true;
-      debugPrint('❌ Gagal load app names: $e');
+      debugPrint('❌ Gagal load app names (method channel): $e');
+
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final cached = prefs.getStringList('cached_launchable_packages');
+        if (cached != null) {
+          _launchablePackages = cached.toSet();
+          debugPrint(
+              '✅ Fallback: ${_launchablePackages.length} package dari cache');
+        }
+      } catch (e2) {
+        debugPrint('❌ Gagal baca cache launchable packages: $e2');
+      }
     }
   }
 

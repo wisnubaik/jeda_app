@@ -62,7 +62,14 @@ class AppBlockerService : AccessibilityService() {
         val prefs = applicationContext.getSharedPreferences(
             "JedaPrefs", Context.MODE_PRIVATE
         )
-        val isBlockingActive = prefs.getBoolean("isBlockingActive", false)
+        val isBlockingActiveMain = prefs.getBoolean("isBlockingActive", false)
+
+        val flutterPrefs = applicationContext.getSharedPreferences(
+            "FlutterSharedPreferences", Context.MODE_PRIVATE
+        )
+        val isBlockingActiveBg = flutterPrefs.getBoolean("flutter.isBlockingActive_bg", false)
+
+        val isBlockingActive = isBlockingActiveMain || isBlockingActiveBg
         if (!isBlockingActive) return
 
         // Cek snooze
