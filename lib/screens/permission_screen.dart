@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:jeda_app/services/app_provider.dart';
+import 'package:notification_listener_service/notification_listener_service.dart';
 
 class PermissionScreen extends StatefulWidget {
   const PermissionScreen({super.key});
@@ -11,7 +12,9 @@ class PermissionScreen extends StatefulWidget {
 }
 
 class _PermissionScreenState extends State<PermissionScreen>
-    with WidgetsBindingObserver {          // ← tambah mixin ini
+    with WidgetsBindingObserver {   
+      
+       bool _isLoading = false;       // ← tambah mixin ini
 
   @override
   void initState() {
@@ -51,9 +54,47 @@ void dispose() {
   }
 
   Future<void> _requestUsage() async {
-    final provider = context.read<AppProvider>();
-    await provider.openUsageSettings();
+  if (_isLoading) return;  // Prevent double tap
+  
+  setState(() => _isLoading = true);  // ← Set loading = true
+  debugPrint('📱 Memulai request permissions...');
+
+  final provider = context.read<AppProvider>();
+
+  // STEP 1: Request Usage Stats Permission
+  debugPrint('📊 [1/2] Requesting Usage Stats permission...');
+  await provider.openUsageSettings();
+
+  // Tunggu sebentar agar user sempat approve di Settings
+  await Future.delayed(const Duration(seconds: 1));
+
+  // STEP 2: Request Notification Listener Permission ← TEMPAT UTAMA TAMBAHAN
+  debugPrint('🔔 [2/2] Requesting Notification Listener permission...');
+  try {
+    bool isNotifGranted =
+        await NotificationListenerService.isPermissionGranted() ?? false;
+    if (!isNotifGranted) {
+      debugPrint('🔔 Notif listener belum granted, request sekarang...');
+      await NotificationListenerService.requestPermission();
+      isNotifGranted =
+          await NotificationListenerService.isPermissionGranted() ?? false;
+      debugPrint('🔔 Notif listener granted: $isNotifGranted');
+    } else {
+      debugPrint('🔔 Notif listener sudah granted sebelumnya');
+    }
+  } catch (e) {
+    debugPrint('❌ Error saat request notif listener: $e');
   }
+
+  // STEP 3: Re-check usage permission dan navigate
+  debugPrint('✅ Kedua permission sudah diminta, cek ulang Usage Stats...');
+  await provider.checkPermission();
+
+  if (mounted) {
+    setState(() => _isLoading = false);  // ← Set loading = false
+    _checkAndNavigate();
+  }
+}
 
   @override
   Widget build(BuildContext context) {
@@ -94,7 +135,7 @@ void dispose() {
               const SizedBox(height: 12),
 
               Text(
-                'Izinkan Jeda mengakses data penggunaan agar fitur monitoring bisa berjalan dengan akurat.',
+                'Izinkan Jeda mengakses data penggunaan dan notifikasi agar fitur monitoring bisa berjalan dengan akurat.',
                 textAlign: TextAlign.center,
                 style: GoogleFonts.poppins(
                   fontSize: 14,
@@ -108,7 +149,7 @@ void dispose() {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _requestUsage,
+                  onPressed: _isLoading ? null : _requestUsage,  // ← Disable saat loading
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFFFC107),
                     foregroundColor: Colors.white,
@@ -118,7 +159,16 @@ void dispose() {
                       borderRadius: BorderRadius.circular(16),
                     ),
                   ),
-                  child: Text(
+                  child: _isLoading  // ← Show loading indicator
+        ? const SizedBox(
+            height: 20,
+            width: 20,
+            child: CircularProgressIndicator(
+              color: Colors.white,
+              strokeWidth: 2,
+            ),
+          )
+          : Text(
                     'Berikan Izin',
                     style: GoogleFonts.poppins(
                       fontWeight: FontWeight.w700,

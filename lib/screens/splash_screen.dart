@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -33,11 +34,21 @@ class _SplashScreenState extends State<SplashScreen>
 
     // Navigasi ke halaman berikutnya setelah 2.5 detik
     // Ganti '/home' dengan route tujuanmu
-    Timer(const Duration(milliseconds: 2500), () {
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, '/home');
-      }
-    });
+    Timer(const Duration(milliseconds: 2500), () async {
+  if (!mounted) return;
+
+  final prefs = await SharedPreferences.getInstance();
+  final isOnboarded = prefs.getBool('is_onboarded') ?? false;
+
+  debugPrint('🔍 Splash: isOnboarded=$isOnboarded');
+
+  if (mounted) {
+    Navigator.pushReplacementNamed(
+      context, 
+      isOnboarded ? '/permission' : '/onboarding'
+    );
+  }
+});
   }
 
   @override
