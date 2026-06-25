@@ -431,27 +431,12 @@ class AppProvider extends ChangeNotifier {
 
       final windowStart = DateTime(now.year, now.month, now.day - 1, 20, 0, 0);
 
-      const socialPackages = {
-        'com.instagram.android',
-        'com.zhiliaoapp.musically',
-        'com.ss.android.ugc.trill',
-        'com.ss.android.ugc.aweme',
-        'com.facebook.katana',
-        'com.twitter.android',
-        'com.snapchat.android',
-        'com.whatsapp',
-        'com.whatsapp.w4b',
-        'com.tencent.mm',
-      };
-
-      const gamePackages = {
-        'com.garena.game.codm',
-        'com.mobile.legends',
-        'com.pubg.imobile',
-        'com.dts.freefireth',
-        'com.supercell.clashofclans',
-        'com.mojang.minecraftpe',
-      };
+      // Identifikasi sosial media menggunakan ApplicationInfo.CATEGORY_SOCIAL (nilai 4)
+      // dari Android API — ditetapkan oleh developer aplikasi masing-masing.
+      // Referensi: Android Developer Documentation (ApplicationInfo.CATEGORY_SOCIAL);
+      // Woodward et al. (2025), J. technol. behav. sci., DOI: 10.1007/s41347-024-00474-y;
+      // Khalaida et al. (2025), JATI Vol.9 No.5.
+      bool isSocialMedia(String pkg) => (_appCategoryMap[pkg] ?? -1) == 4;
 
       bool isSystemPackage(String pkg) {
         return !_launchablePackages.contains(pkg);
@@ -575,7 +560,6 @@ class AppProvider extends ChangeNotifier {
 
       double reconciledTotal = 0;
       double reconciledSocial = 0;
-      double reconciledGaming = 0;
 
       for (final pkg in appsWithActivityToday) {
         if (isSystemPackage(pkg)) continue;
@@ -584,8 +568,7 @@ class AppProvider extends ChangeNotifier {
         if (chosen <= 0) continue;
 
         reconciledTotal += chosen;
-        if (socialPackages.contains(pkg)) reconciledSocial += chosen;
-        if (gamePackages.contains(pkg)) reconciledGaming += chosen;
+        if (isSocialMedia(pkg)) reconciledSocial += chosen;
       }
 
       debugPrint(
@@ -654,7 +637,6 @@ class AppProvider extends ChangeNotifier {
 
       final screenHours = reconciledTotal / 3600000.0;
       final socialHours = reconciledSocial / 3600000.0;
-      final gamingHours = reconciledGaming / 3600000.0;
       final nightUsageHours = nightScreenMs / 3600000.0;
 
       debugPrint('════════════════════════════════════');
@@ -672,7 +654,7 @@ class AppProvider extends ChangeNotifier {
         dailyScreenTime: screenHours,
         appSessions: screenUnlockCount,
         socialMediaUsage: socialHours,
-        gamingTime: gamingHours,
+        gamingTime: 0,
         notifications: _data.notifications,
         nightUsage: nightUsageHours,
         appsInstalled: 0,
@@ -723,7 +705,12 @@ class AppProvider extends ChangeNotifier {
 
     // ─── LOG 2: Sosial Media Berlebihan ──────────────────────────────────────
     // Trigger: socialMediaUsage > 5.0 jam/hari
-    // Landasan: Sert, Ünsal, Can (2026) — penggunaan sosmed ≥5 jam/hari
+    // Deteksi sosmed via ApplicationInfo.CATEGORY_SOCIAL (Android API).
+    // Referensi klasifikasi platform: Woodward et al. (2025), J. Technol. Behav.
+    // Sci., DOI: 10.1007/s41347-024-00474-y — mengklasifikasikan TikTok, Twitter,
+    // YouTube, Instagram, Facebook, Snapchat, Reddit sebagai platform sosial media;
+    // Khalaida et al. (2025), JATI Vol.9 No.5 — konteks Indonesia.
+    // Threshold: Sert, Ünsal, Can (2026) — penggunaan sosmed ≥5 jam/hari
     // dikaitkan dengan skor adiksi lebih tinggi pada remaja SMA (n=858).
     if (_data.socialMediaUsage > 5.0) {
       addLog('sosmed_berlebihan', {
@@ -732,7 +719,7 @@ class AppProvider extends ChangeNotifier {
             'Penggunaan sosial media hari ini melebihi 5 jam. Remaja yang menggunakan sosial media ≥5 jam per hari menunjukkan skor adiksi smartphone yang lebih tinggi.',
         'color': const Color(0xFFEC4899),
         'icon': Icons.tag_rounded,
-        'source': 'Sert, Ünsal, Can, 2026 — J Community Health. '
+        'source': 'Sert, Ünsal & Can, 2026 — Journal of Community Health. '
             'DOI: 10.1007/s10900-026-01578-7',
       });
     } else {
@@ -741,18 +728,18 @@ class AppProvider extends ChangeNotifier {
 
     // ─── LOG 3: Screen Time Tinggi ───────────────────────────────────────────
     // Trigger: dailyScreenTime > 4.0 jam/hari
-    // Landasan: Francisquini et al. (2024) — screen time >4 jam/hari
-    // dikaitkan dengan peningkatan gejala depresi, kecemasan, dan stres
-    // pada remaja (n=1.627, Brazil).
+    // Landasan: Dai & Ouyang (2026) — screen time ≥4 jam/hari berkaitan dengan
+    // risiko lebih tinggi untuk kecemasan (aOR=1.45), depresi (aOR=1.61),
+    // masalah perilaku (aOR=1.24), dan ADHD (aOR=1.21) pada anak dan remaja AS.
     if (_data.dailyScreenTime > 4.0) {
       addLog('screen_time_tinggi', {
         'title': 'Screen Time Harian Tinggi',
         'desc':
-            'Total waktu layar hari ini melebihi 4 jam. Penggunaan layar lebih dari 4 jam per hari berkaitan dengan peningkatan gejala depresi, kecemasan, dan stres pada remaja.',
+            'Total waktu layar hari ini melebihi 4 jam. Penggunaan layar ≥4 jam per hari berkaitan dengan peningkatan risiko kecemasan, depresi, dan masalah perilaku pada remaja.',
         'color': const Color(0xFFF97316),
         'icon': Icons.phonelink_rounded,
-        'source': 'Francisquini et al., 2024 — Revista Paulista de Pediatria. '
-            'DOI: 10.1590/1984-0462/2025/43/2023250',
+        'source': 'Dai & Ouyang, 2026 — Humanities & Social Sciences Communications. '
+            'DOI: 10.1057/s41599-026-06609-1',
       });
     } else {
       _detectionLogs.removeWhere((l) => l['key'] == 'screen_time_tinggi');
@@ -761,20 +748,24 @@ class AppProvider extends ChangeNotifier {
     // ─── LOG 4: Penggunaan Malam ─────────────────────────────────────────────
     // Trigger: nightUsage > 2.3 jam (di atas rata-rata durasi pakai HP
     // di tempat tidur pada remaja menurut Bozkurt et al., 2024)
-    // Landasan: Bozkurt et al. (2024) — durasi penggunaan smartphone di
-    // tempat tidur rata-rata 2,3 jam/hari; durasi lebih panjang berkaitan
-    // positif dengan kualitas tidur buruk pada remaja usia 13–18 tahun.
-    // nightUsage di sini = total durasi pakai HP antara 22:00–05:00
-    // (proxy operasional untuk "penggunaan HP saat waktu tidur").
+    // Landasan 1: Bozkurt et al. (2024) — rata-rata durasi pakai HP di tempat
+    // tidur 2,3 jam/hari; durasi lebih panjang berkaitan positif dengan kualitas
+    // tidur buruk pada remaja 13–18 tahun. DOI: 10.5152/eurasianjmed.2024.23379
+    // Landasan 2: Dutil et al. (2022) — waktu tidur setelah pukul 22:00
+    // dikaitkan dengan peningkatan gejala depresi dan performa akademik lebih
+    // rendah pada remaja. DOI: 10.24095/hpcdp.42.4.04
+    // nightUsage = total durasi pakai HP antara 22:00–05:00 (proxy operasional).
     if (_data.nightUsage > 2.3) {
       addLog('penggunaan_malam', {
         'title': 'Penggunaan Smartphone Malam Hari Tinggi',
         'desc':
-            'Penggunaan smartphone antara pukul 22:00–05:00 melebihi 2,3 jam. Durasi penggunaan HP di waktu tidur yang melebihi rata-rata remaja berkaitan dengan kualitas tidur yang lebih buruk.',
+            'Penggunaan smartphone antara pukul 22:00–05:00 melebihi 2,3 jam. Durasi ini di atas rata-rata remaja dan berkaitan dengan kualitas tidur buruk serta peningkatan risiko depresi.',
         'color': const Color(0xFF6366F1),
         'icon': Icons.nightlight_rounded,
         'source': 'Bozkurt et al., 2024 — Eurasian Journal of Medicine. '
-            'DOI: 10.5152/eurasianjmed.2024.23379',
+            'DOI: 10.5152/eurasianjmed.2024.23379 | '
+            'Dutil et al., 2022 — Health Promot. Chronic Dis. Prev. Can. '
+            'DOI: 10.24095/hpcdp.42.4.04',
       });
     } else {
       _detectionLogs.removeWhere((l) => l['key'] == 'penggunaan_malam');
