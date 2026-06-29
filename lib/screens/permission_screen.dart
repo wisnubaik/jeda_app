@@ -40,10 +40,13 @@ class _PermissionScreenState extends State<PermissionScreen>
   Future<void> _checkInitialState() async {
     final provider = context.read<AppProvider>();
 
-    // Cek Usage Stats
+    // Paksa cek ulang ke sistem Android secara langsung, jangan asumsikan
+    // provider.hasPermission sudah ter-update (provider.initialize() bisa
+    // saja masih berjalan di background saat screen ini pertama dimuat).
+    await provider.checkPermission();
+
     bool usageGranted = provider.hasPermission;
 
-    // Cek Notification Listener
     bool notifGranted =
         await NotificationListenerService.isPermissionGranted() ?? false;
 
@@ -95,6 +98,21 @@ class _PermissionScreenState extends State<PermissionScreen>
   /// Hanya navigate ke /home jika KEDUA permission sudah granted
   /// ═════════════════════════════════════════════════════════════════
   void _checkAndNavigate() {
+    if (!mounted) return;
+
+    // Sinkronkan _usageGranted dengan provider.hasPermission setiap kali
+    // listener ini terpanggil (dipicu oleh notifyListeners() di
+    // AppProvider, termasuk saat initialize()/checkPermission() selesai).
+    // Tanpa ini, _usageGranted bisa "nyangkut" di nilai lama walau
+    // provider.hasPermission sudah benar, karena keduanya adalah
+    // variabel state yang berbeda dan tidak otomatis sinkron.
+    final provider = context.read<AppProvider>();
+    if (_usageGranted != provider.hasPermission) {
+      setState(() {
+        _usageGranted = provider.hasPermission;
+      });
+    }
+
     if (_usageGranted && _notifGranted && mounted) {
       context.read<AppProvider>().removeListener(_checkAndNavigate);
       debugPrint('✅ KEDUA permission granted! Navigate ke /home');

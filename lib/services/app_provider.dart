@@ -904,10 +904,18 @@ class AppProvider extends ChangeNotifier {
         }
       } catch (_) {}
     } else {
-      if (_prediction == 1) await _syncBlockerToNative(true);
+      // Saat monitoring dinyalakan kembali, evaluasi ulang kondisi
+      // TERKINI (bukan cuma sync status prediksi lama) — supaya kalau
+      // pemakaian sudah berada di kondisi BAHAYA sejak sebelum
+      // monitoring dimatikan, peringatan langsung muncul lagi, bukan
+      // menunggu siklus polling/WorkManager berikutnya.
+      if (_hasPermission) {
+        await fetchUsageData();
+      } else if (_prediction == 1) {
+        await _syncBlockerToNative(true);
+      }
     }
   }
-
   Future<void> _syncBlockerToNative(bool status) async {
     try {
       await platform.invokeMethod('setBlockingStatus', {'status': status});
@@ -1269,7 +1277,11 @@ class AppProvider extends ChangeNotifier {
 
     _snoozeTimer?.cancel();
     _snoozeTimer = Timer(Duration(seconds: seconds), () async {
-      if (_isMonitoringEnabled && _prediction == 1) {
+      if (!_isMonitoringEnabled) return;
+      if (_hasPermission) {
+        await fetchUsageData();
+      }
+      if (_prediction == 1) {
         await enforceBlockIfNecessary();
         await showNotificationAlert();
         _checkAndShowWarning();
