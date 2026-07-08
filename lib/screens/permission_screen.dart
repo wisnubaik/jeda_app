@@ -66,7 +66,9 @@ class _PermissionScreenState extends State<PermissionScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _recheckPermission();
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted) _recheckPermission();
+      });
     }
   }
 
@@ -164,7 +166,7 @@ class _PermissionScreenState extends State<PermissionScreen>
     }
 
     // ───────────────────────────────────────────────────────────────
-    // STEP 3: Re-check KEDUA permission
+    // STEP 3: Re-check KEDUA permission wajib (Usage + Notifikasi)
     // ───────────────────────────────────────────────────────────────
     debugPrint('✅ Kedua permission sudah diminta, cek ulang...');
     await provider.checkPermission();

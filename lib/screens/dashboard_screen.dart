@@ -77,27 +77,45 @@ class _DashboardScreenState extends State<DashboardScreen>
   void _showAccessibilityDialog() {
     showDialog(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Row(children: [
-          Icon(Icons.security, color: Color(0xFFEF4444)),
+          Icon(Icons.shield_outlined, color: Color(0xFFEF4444)),
           SizedBox(width: 10),
-          Text('Izin Diperlukan',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18))
+          Expanded(
+            child: Text('Aktifkan Fitur Pemblokiran',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          )
         ]),
         content: const Text(
-            'Aktifkan Layanan Aksesibilitas untuk aplikasi Jeda di Pengaturan HP Anda.',
+            'Fitur pemblokiran membantu menahan penggunaan aplikasi saat '
+            'terdeteksi berlebihan. Untuk mengaktifkannya, Jeda memerlukan '
+            'izin Layanan Aksesibilitas dan izin tampil di atas aplikasi lain.\n\n'
+            'Fitur ini bersifat opsional — Jeda tetap dapat memantau '
+            'penggunaan meski izin ini tidak diaktifkan.',
             style: TextStyle(fontSize: 14)),
         actions: [
           TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('NANTI SAJA',
+                  style: TextStyle(color: Color(0xFF6B7280)))),
+          TextButton(
               onPressed: () async {
                 Navigator.pop(context);
-                await context
-                    .read<AppProvider>()
-                    .requestAccessibilityPermission();
+                final provider = context.read<AppProvider>();
+                // Minta izin overlay dulu (opsional), lalu accessibility.
+                // Keduanya untuk fitur pemblokiran yang sama.
+                try {
+                  final overlayGranted =
+                      await provider.isOverlayPermissionGranted();
+                  if (!overlayGranted) {
+                    await provider.requestOverlayPermission();
+                  }
+                } catch (_) {}
+                await provider.requestAccessibilityPermission();
               },
-              child: const Text('BUKA PENGATURAN',
+              child: const Text('AKTIFKAN',
                   style: TextStyle(
                       fontWeight: FontWeight.bold, color: Color(0xFF1A1A2E))))
         ],

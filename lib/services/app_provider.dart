@@ -48,6 +48,42 @@ void callbackDispatcher() {
       if (hasPermission) {
         await provider.fetchUsageData();
         debugPrint('✅ WorkManager: fetchUsageData selesai di background');
+
+        // Notif "sudah memperbarui data" HANYA sekali setelah reboot,
+        // bukan tiap 15 menit. BootReceiver menyetel flag just_booted=true
+        // saat perangkat menyala; di sini flag dicek lalu langsung di-reset.
+        bool justBooted = false;
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          justBooted = prefs.getBool('just_booted') ?? false;
+          if (justBooted) {
+            await prefs.setBool('just_booted', false);
+          }
+        } catch (_) {}
+
+        if (justBooted) {
+          final statusStr = provider._prediction == 1 ? '⚠️ Bahaya' : '✅ Aman';
+          final screenStr = provider._data.dailyScreenTime.toStringAsFixed(1);
+          final notifCount = provider._data.notifications;
+          await provider._notificationsPlugin.show(
+            1002,
+            'Jeda sudah memperbarui data',
+            'Status: $statusStr · ${screenStr}j layar · $notifCount notif',
+            const NotificationDetails(
+              android: AndroidNotificationDetails(
+                'jeda_calc_channel',
+                'Jeda - Pembaruan Data',
+                channelDescription:
+                    'Notifikasi saat Jeda memperbarui data penggunaan di background',
+                importance: Importance.low,
+                priority: Priority.low,
+                autoCancel: true,
+                onlyAlertOnce: true,
+                icon: '@mipmap/ic_launcher',
+              ),
+            ),
+          );
+        }
       } else {
         debugPrint('⚠️ WorkManager: permission belum ada, skip fetch');
       }
@@ -264,10 +300,12 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> _initNotificationListener(SharedPreferences prefs) async {
     try {
-      bool isGranted = await NotificationListenerService.isPermissionGranted();
+      bool isGranted =
+          (await NotificationListenerService.isPermissionGranted()) ?? false;
       if (!isGranted) {
         await NotificationListenerService.requestPermission();
-        isGranted = await NotificationListenerService.isPermissionGranted();
+        isGranted =
+            (await NotificationListenerService.isPermissionGranted()) ?? false;
       }
       if (!isGranted) {
         debugPrint('⚠️ Izin notifikasi tidak diberikan');
@@ -308,7 +346,7 @@ class AppProvider extends ChangeNotifier {
         await prefs.setInt('notif_count', _data.notifications);
         debugPrint(
             '🔔 Notif [+1]: $pkg | Total: ${_data.notifications} | hash: $hashKey');
-        _runPrediction();
+        _runPrediction(allowWarning: false);
         notifyListeners();
       });
 
@@ -825,6 +863,8 @@ class AppProvider extends ChangeNotifier {
       await _initNotificationListener(prefs);
     }
 
+    final bool hadPermissionBefore = _hasPermission;
+
     try {
       _hasPermission = (await UsageStats.checkUsagePermission()) ?? false;
     } catch (_) {
@@ -833,6 +873,23 @@ class AppProvider extends ChangeNotifier {
 
     debugPrint('🔑 hasPermission setelah resume: $_hasPermission');
     debugPrint('🔑 initialized: $_initialized');
+
+    // Jika permission Usage Stats BARU saja diberikan (transisi
+    // false -> true), _countMissedNotifications() di initialize()
+    // kemungkinan gagal total karena dijalankan sebelum izin ada.
+    // Hitung ulang notif sekarang supaya tidak nyangkut di 0.
+    if (_hasPermission && !hadPermissionBefore) {
+      final now = DateTime.now();
+      final startOfDay = DateTime(now.year, now.month, now.day, 0, 0, 0);
+      final eventCount = await _countMissedNotifications(startOfDay);
+      final adjustedEventCount = (eventCount * 1.15).round();
+      if (adjustedEventCount > _data.notifications) {
+        _data.notifications = adjustedEventCount;
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt('notif_count', _data.notifications);
+        debugPrint('📬 Notif dihitung ulang setelah permission baru: ${_data.notifications}');
+      }
+    }
 
     if (_hasPermission) {
       try {
@@ -858,10 +915,25 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> checkPermission() async {
+    final bool hadPermissionBefore = _hasPermission;
     try {
       _hasPermission = (await UsageStats.checkUsagePermission()) ?? false;
     } catch (_) {
       _hasPermission = false;
+    }
+
+    if (_hasPermission && !hadPermissionBefore) {
+      final now = DateTime.now();
+      final startOfDay = DateTime(now.year, now.month, now.day, 0, 0, 0);
+      final eventCount = await _countMissedNotifications(startOfDay);
+      final adjustedEventCount = (eventCount * 1.15).round();
+      if (adjustedEventCount > _data.notifications) {
+        _data.notifications = adjustedEventCount;
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setInt('notif_count', _data.notifications);
+        debugPrint('📬 Notif dihitung ulang setelah permission baru (checkPermission): ${_data.notifications}');
+      }
+      await fetchUsageData();
     }
     notifyListeners();
   }
@@ -976,8 +1048,27 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  // Helper: cek apakah sedang dalam periode snooze (baca snoozeUntil dari
+  // native JedaPrefs). Dipakai di banyak titik agar snooze selalu dihormati,
+  // termasuk saat notif masuk memicu evaluasi ulang.
+  Future<bool> _isSnoozing() async {
+    try {
+      final snoozeUntilMs =
+          await platform.invokeMethod<int>('getSnoozeUntil') ?? 0;
+      return DateTime.now().millisecondsSinceEpoch < snoozeUntilMs;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> showNotificationAlert() async {
+    // Guard: jangan tampilkan alert jika monitoring mati, dialog sudah
+    // terbuka, atau sedang snooze. Tanpa cek ini, setiap notifikasi yang
+    // masuk (WA/IG/dll) bisa memicu alert berulang meski user baru saja
+    // menunda peringatan.
     if (!_isMonitoringEnabled) return;
+    if (_isWarningOpen) return;
+    if (await _isSnoozing()) return;
     try {
       Int64List? pattern;
       bool vibrate = true;
@@ -1092,7 +1183,7 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _runPrediction() {
+  void _runPrediction({bool allowWarning = true}) {
     if (_model != null) {
       debugPrint('🧠 INPUT MODEL:');
       debugPrint(
@@ -1128,26 +1219,27 @@ class AppProvider extends ChangeNotifier {
       _syncBlockerToNative(false);
     }
 
-    _checkAndShowWarning();
+    // Hanya munculkan peringatan bila diizinkan. Saat dipicu oleh
+    // notifikasi yang masuk, allowWarning=false: status & UI tetap
+    // diperbarui, tapi pop-up "SAATNYA JEDA!" tidak dimunculkan agar
+    // tidak spam setiap ada notif. Pop-up tetap muncul dari polling
+    // berkala, WorkManager, atau saat snooze berakhir.
+    if (allowWarning) {
+      _checkAndShowWarning();
+    }
   }
 
   void _checkAndShowWarning() async {
     if (_prediction != 1 || !_isMonitoringEnabled || _isWarningOpen) return;
 
-    // Cek snooze dari native (JedaPrefs key: snoozeUntil, tipe Long/ms)
-    // — bukan dari SharedPreferences Flutter, karena setSnooze disimpan
-    // di sisi Kotlin via getSharedPreferences("JedaPrefs").
-    try {
-      final snoozeUntilMs =
-          await platform.invokeMethod<int>('getSnoozeUntil') ?? 0;
-      if (DateTime.now().millisecondsSinceEpoch < snoozeUntilMs) return;
-    } catch (_) {
-      // Jika native tidak support method ini, lanjut tanpa cek snooze
-    }
+    // Cek snooze dari native (JedaPrefs key: snoozeUntil, tipe Long/ms).
+    if (await _isSnoozing()) return;
+
+    // Set guard SEBELUM menampilkan apa pun, agar panggilan beruntun
+    // tidak lolos dan menampilkan alert/dialog berkali-kali.
+    _isWarningOpen = true;
 
     showNotificationAlert();
-
-    _isWarningOpen = true;
     _showGlobalWarningDialog();
   }
 
@@ -1283,7 +1375,11 @@ class AppProvider extends ChangeNotifier {
       }
       if (_prediction == 1) {
         await enforceBlockIfNecessary();
-        await showNotificationAlert();
+        // Cukup lewat _checkAndShowWarning() sebagai satu-satunya pintu:
+        // fungsi ini sudah mengecek prediction, monitoring, snooze, dan
+        // guard _isWarningOpen, lalu menampilkan notif + dialog secara
+        // terkontrol. Memanggil showNotificationAlert() terpisah membuat
+        // notif berpotensi tampil dua kali.
         _checkAndShowWarning();
       }
     });

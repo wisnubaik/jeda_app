@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:provider/provider.dart';
+import 'package:notification_listener_service/notification_listener_service.dart';
+import '../services/app_provider.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -42,12 +45,25 @@ class _SplashScreenState extends State<SplashScreen>
 
   debugPrint('🔍 Splash: isOnboarded=$isOnboarded');
 
-  if (mounted) {
-    Navigator.pushReplacementNamed(
-      context, 
-      isOnboarded ? '/permission' : '/onboarding'
-    );
+  if (!isOnboarded) {
+    if (mounted) Navigator.pushReplacementNamed(context, '/onboarding');
+    return;
   }
+
+  final provider = context.read<AppProvider>();
+  await provider.checkPermission();
+  final usageGranted = provider.hasPermission;
+  final notifGranted =
+      await NotificationListenerService.isPermissionGranted() ?? false;
+
+  debugPrint('🔍 Splash: usage=$usageGranted, notif=$notifGranted');
+
+  if (!mounted) return;
+
+  Navigator.pushReplacementNamed(
+    context,
+    (usageGranted && notifGranted) ? '/home' : '/permission',
+  );
 });
   }
 
