@@ -1063,9 +1063,6 @@ class AppProvider extends ChangeNotifier {
       if (await FlutterOverlayWindow.isActive()) return; // hindari dobel
       final granted = await FlutterOverlayWindow.isPermissionGranted();
       if (!granted) return;
-      // Tandai peringatan NYATA agar overlay widget boleh membunyikan alarm.
-      final prefsAlarm = await SharedPreferences.getInstance();
-      await prefsAlarm.setBool('overlay_should_alarm', true);
       await FlutterOverlayWindow.showOverlay(
         enableDrag: false,
         overlayTitle: 'Saatnya Jeda',
@@ -1075,6 +1072,12 @@ class AppProvider extends ChangeNotifier {
         height: WindowSize.matchParent,
         width: WindowSize.matchParent,
       );
+      // Kirim sinyal "alarm" ke isolate overlay via shareData (dijamin sampai,
+      // tidak seperti SharedPreferences yang bisa race saat overlay initState
+      // membaca sebelum nilai ter-flush). Overlay yang re-attach saat startup
+      // TIDAK menerima shareData ini sehingga tidak berbunyi.
+      await Future.delayed(const Duration(milliseconds: 200));
+      await FlutterOverlayWindow.shareData({'action': 'alarm'});
     } catch (e) {
       debugPrint('❌ showJedaOverlay: $e');
     }

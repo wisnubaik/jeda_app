@@ -165,7 +165,7 @@ class AppBlockerService : AccessibilityService() {
         // benar-benar tidak tersedia.
         if (Settings.canDrawOverlays(applicationContext)) {
             tryShowFlutterOverlay()
-            Log.d("JedaBlocker", "✅ Overlay ditampilkan (redirect dinonaktifkan)")
+            Log.d("JedaBlocker", "📤 Minta Dart tampilkan overlay (flag-based v2)")
         } else {
             Log.w("JedaBlocker", "⚠️ Izin overlay tidak ada — fallback redirect")
             val launchIntent = packageManager

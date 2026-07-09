@@ -18,30 +18,22 @@ class _JedaOverlayWidgetState extends State<JedaOverlayWidget> {
   @override
   void initState() {
     super.initState();
-    _playAlarm();
+    // Dengarkan sinyal dari isolate utama. Alarm HANYA berbunyi bila menerima
+    // shareData {'action':'alarm'} yang dikirim showJedaOverlay saat deteksi
+    // Bahaya. Overlay yang re-attach saat startup tidak menerima sinyal ini,
+    // sehingga tidak berbunyi.
+    FlutterOverlayWindow.overlayListener.listen((event) {
+      if (event is Map && event['action'] == 'alarm') {
+        _playAlarm();
+      }
+    });
   }
 
   Future<void> _playAlarm() async {
+    debugPrint('🔊 [OVERLAY] _playAlarm dipanggil (peringatan nyata)');
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
-
-      // GUARD PENTING: overlay hanya membunyikan alarm bila memang dipicu oleh
-      // deteksi Bahaya (flag di-set oleh showJedaOverlay di isolate utama).
-      // Saat aplikasi baru dibuka, OverlayService lama bisa re-attach dan
-      // menjalankan overlayMain -> initState di isolate terpisah TANPA melalui
-      // showJedaOverlay. Tanpa guard ini, alarm akan berbunyi saat startup.
-      final shouldAlarm = prefs.getBool('flutter.overlay_should_alarm') ?? false;
-      if (!shouldAlarm) {
-        // Overlay tak seharusnya tampil (re-attach startup) -> tutup diam-diam.
-        debugPrint('🔕 [OVERLAY] bukan peringatan nyata, tutup tanpa alarm');
-        await FlutterOverlayWindow.closeOverlay();
-        return;
-      }
-      // Konsumsi flag agar tidak dipakai ulang.
-      await prefs.setBool('flutter.overlay_should_alarm', false);
-
-      debugPrint('🔊 [OVERLAY] _playAlarm dipanggil (peringatan nyata)');
       final soundOn = prefs.getBool('flutter.sound_enabled') ?? true;
       final alarm = prefs.getString('flutter.alarm_sound') ?? 'alarm';
       final vibMode = prefs.getString('flutter.vibration_mode') ?? 'pendek';
@@ -60,7 +52,9 @@ class _JedaOverlayWidgetState extends State<JedaOverlayWidget> {
           }
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('❌ [OVERLAY] gagal play alarm: $e');
+    }
   }
 
   Future<void> _stopAlarm() async {

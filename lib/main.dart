@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:workmanager/workmanager.dart';
@@ -50,8 +51,12 @@ void overlayMain() {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Tutup overlay yang mungkin masih menggantung dari sesi sebelumnya.
+  // Tutup overlay yang mungkin masih menggantung dari sesi sebelumnya, dan
+  // pastikan flag alarm dimatikan agar overlay yang re-attach saat startup
+  // tidak membunyikan alarm.
   try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('overlay_should_alarm', false);
     if (await FlutterOverlayWindow.isActive()) {
       await FlutterOverlayWindow.closeOverlay();
     }
