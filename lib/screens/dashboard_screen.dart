@@ -60,9 +60,9 @@ class _DashboardScreenState extends State<DashboardScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _checkAccessibility();
-      // ⬇️ DIHAPUS: _checkAndShowWarning() — sudah otomatis lewat
-      // _runPrediction() di AppProvider (dipanggil saat fetchUsageData
-      // / onAppResumed jalan).
+      // Sinkronkan status monitoring dari native: jika monitoring dimatikan
+      // via overlay saat app di background, toggle dashboard ikut OFF.
+      context.read<AppProvider>().onAppResumed();
     }
   }
 

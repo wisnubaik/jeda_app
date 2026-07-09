@@ -1,21 +1,101 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:vibration/vibration.dart';
 
-class JedaOverlayWidget extends StatelessWidget {
+class JedaOverlayWidget extends StatefulWidget {
   const JedaOverlayWidget({super.key});
 
-  // Kirim pesan ke main isolate lalu tutup overlay
+  @override
+  State<JedaOverlayWidget> createState() => _JedaOverlayWidgetState();
+}
+
+class _JedaOverlayWidgetState extends State<JedaOverlayWidget> {
+  final AudioPlayer _player = AudioPlayer();
+
+  @override
+  void initState() {
+    super.initState();
+    _playAlarm();
+  }
+
+  Future<void> _playAlarm() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+
+      // GUARD PENTING: overlay hanya membunyikan alarm bila memang dipicu oleh
+      // deteksi Bahaya (flag di-set oleh showJedaOverlay di isolate utama).
+      // Saat aplikasi baru dibuka, OverlayService lama bisa re-attach dan
+      // menjalankan overlayMain -> initState di isolate terpisah TANPA melalui
+      // showJedaOverlay. Tanpa guard ini, alarm akan berbunyi saat startup.
+      final shouldAlarm = prefs.getBool('flutter.overlay_should_alarm') ?? false;
+      if (!shouldAlarm) {
+        // Overlay tak seharusnya tampil (re-attach startup) -> tutup diam-diam.
+        debugPrint('🔕 [OVERLAY] bukan peringatan nyata, tutup tanpa alarm');
+        await FlutterOverlayWindow.closeOverlay();
+        return;
+      }
+      // Konsumsi flag agar tidak dipakai ulang.
+      await prefs.setBool('flutter.overlay_should_alarm', false);
+
+      debugPrint('🔊 [OVERLAY] _playAlarm dipanggil (peringatan nyata)');
+      final soundOn = prefs.getBool('flutter.sound_enabled') ?? true;
+      final alarm = prefs.getString('flutter.alarm_sound') ?? 'alarm';
+      final vibMode = prefs.getString('flutter.vibration_mode') ?? 'pendek';
+
+      if (soundOn) {
+        await _player.setReleaseMode(ReleaseMode.stop);
+        await _player.play(AssetSource('sounds/$alarm.mp3'));
+      }
+      if (vibMode != 'off') {
+        final hasVib = await Vibration.hasVibrator() ?? false;
+        if (hasVib) {
+          if (vibMode == 'panjang') {
+            Vibration.vibrate(pattern: [0, 1000, 500, 1000, 500, 1000]);
+          } else {
+            Vibration.vibrate(pattern: [0, 200, 100, 200]);
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _stopAlarm() async {
+    try {
+      await _player.stop();
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _player.dispose();
+    super.dispose();
+  }
+
   Future<void> _snooze(int seconds) async {
-    await FlutterOverlayWindow.shareData({
-      'action': 'snooze',
-      'seconds': seconds,
-    });
+    await _stopAlarm();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (seconds >= 600) {
+        await prefs.setBool('overlay_snoozeLong', true);
+      } else {
+        await prefs.setBool('overlay_snoozeShort', true);
+      }
+      await prefs.reload();
+    } catch (_) {}
     await FlutterOverlayWindow.closeOverlay();
   }
 
   Future<void> _disableMonitoring() async {
-    await FlutterOverlayWindow.shareData({'action': 'disable_monitoring'});
+    await _stopAlarm();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('overlay_disableMonitoring', true);
+      await prefs.reload();
+    } catch (_) {}
     await FlutterOverlayWindow.closeOverlay();
   }
 
@@ -23,109 +103,88 @@ class JedaOverlayWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
-      child: Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 16),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(28),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.35),
-                blurRadius: 40,
-                spreadRadius: 5,
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: const BoxDecoration(
-                  color: Color(0xFFF97316),
-                  shape: BoxShape.circle,
+      child: SizedBox.expand(
+        child: Align(
+          alignment: const Alignment(0, 0.15),
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 40),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(22),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.3),
+                  blurRadius: 28,
+                  spreadRadius: 2,
                 ),
-                child: const Icon(
-                  Icons.wb_sunny_rounded,
-                  color: Colors.white,
-                  size: 40,
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(11),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF97316),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.wb_sunny_rounded,
+                      color: Colors.white, size: 28),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'SAATNYA JEDA!',
-                style: GoogleFonts.poppins(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w900,
-                  color: const Color(0xFFF97316),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Pola penggunaanmu sudah berlebihan.\nMata dan pikiranmu butuh istirahat.',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.poppins(
-                  fontSize: 13,
-                  color: Colors.grey[600],
-                  height: 1.5,
-                ),
-              ),
-              const SizedBox(height: 24),
-              _buildBtn(
-                'Ingatkan 5 Detik Lagi',
-                isPrimary: true,
-                onTap: () => _snooze(5),
-              ),
-              const SizedBox(height: 10),
-              _buildBtn(
-                'Ingatkan 10 Detik Lagi',
-                isPrimary: true,
-                onTap: () => _snooze(10),
-              ),
-              const SizedBox(height: 10),
-              _buildBtn(
-                'Ingatkan 1 Menit Lagi',
-                isPrimary: false,
-                onTap: () => _snooze(60),
-              ),
-              const SizedBox(height: 20),
-              GestureDetector(
-                onTap: _disableMonitoring,
-                child: RichText(
-                  textAlign: TextAlign.center,
-                  text: TextSpan(
+                const SizedBox(height: 12),
+                Text('SAATNYA JEDA!',
                     style: GoogleFonts.poppins(
-                      fontSize: 12,
-                      color: Colors.grey[500],
-                    ),
-                    children: [
-                      const TextSpan(text: 'Saya sedang produktif. '),
-                      TextSpan(
-                        text: 'Matikan\nmonitoring hari ini!',
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                        color: const Color(0xFFF97316))),
+                const SizedBox(height: 6),
+                Text(
+                  'Pola penggunaanmu sudah berlebihan.\nWaktunya istirahat sejenak.',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.poppins(
+                      fontSize: 11, color: Colors.grey[600], height: 1.4),
+                ),
+                const SizedBox(height: 18),
+                _buildBtn('Ingatkan 10 Detik Lagi',
+                    isPrimary: true, onTap: () => _snooze(10)),
+                const SizedBox(height: 9),
+                _buildBtn('Ingatkan 10 Menit Lagi',
+                    isPrimary: false, onTap: () => _snooze(600)),
+                const SizedBox(height: 14),
+                GestureDetector(
+                  onTap: _disableMonitoring,
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: RichText(
+                      textAlign: TextAlign.center,
+                      text: TextSpan(
                         style: GoogleFonts.poppins(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey[700],
-                          decoration: TextDecoration.underline,
-                        ),
+                            fontSize: 11, color: Colors.grey[500]),
+                        children: [
+                          const TextSpan(text: 'Saya sedang produktif. '),
+                          TextSpan(
+                              text: 'Matikan monitoring hari ini!',
+                              style: GoogleFonts.poppins(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey[700],
+                                  decoration: TextDecoration.underline)),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildBtn(
-    String label, {
-    required bool isPrimary,
-    required VoidCallback onTap,
-  }) {
+  Widget _buildBtn(String label,
+      {required bool isPrimary, required VoidCallback onTap}) {
     return SizedBox(
       width: double.infinity,
       child: ElevatedButton(
@@ -133,20 +192,18 @@ class JedaOverlayWidget extends StatelessWidget {
         style: ElevatedButton.styleFrom(
           backgroundColor: isPrimary ? const Color(0xFFF59E0B) : Colors.white,
           foregroundColor: isPrimary ? Colors.white : Colors.black87,
-          padding: const EdgeInsets.symmetric(vertical: 14),
+          padding: const EdgeInsets.symmetric(vertical: 13),
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(50),
-            side:
-                isPrimary
-                    ? BorderSide.none
-                    : BorderSide(color: Colors.grey[300]!),
+            side: isPrimary
+                ? BorderSide.none
+                : BorderSide(color: Colors.grey[300]!),
           ),
         ),
-        child: Text(
-          label,
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14),
-        ),
+        child: Text(label,
+            style: GoogleFonts.poppins(
+                fontWeight: FontWeight.w600, fontSize: 12)),
       ),
     );
   }

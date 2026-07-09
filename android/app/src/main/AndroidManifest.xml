@@ -1,7 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <uses-sdk tools:overrideLibrary="io.github.parassharmaa.usage_stats"/>
+    <!-- Hapus permission sensitif yang disuntikkan otomatis oleh library
+         pihak ketiga namun tidak digunakan aplikasi ini. Mencegah penolakan
+         Google Play Store. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:node="remove"/>
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" tools:node="remove"/>
+    <uses-permission android:name="android.permission.DUMP" tools:node="remove"/>
 
     <!-- ═══════════════════════════════════════════
          PERMISSIONS
@@ -14,7 +19,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 
@@ -27,6 +31,13 @@
     <uses-permission
         android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
         tools:ignore="ProtectedPermissions" />
+
+        <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <application
         android:label="Jeda"

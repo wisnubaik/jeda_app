@@ -44,10 +44,19 @@ class MainActivity : FlutterActivity() {
                 }
 
                 // ── Baru: Flutter baca nilai snoozeUntil dari JedaPrefs ──
-                "getSnoozeUntil" -> {
-                    val snoozeUntil = getSharedPreferences("JedaPrefs", Context.MODE_PRIVATE)
-                        .getLong("snoozeUntil", 0L)
-                    result.success(snoozeUntil)
+                "getBlockingStatus" -> {
+                    val isBlocking = getSharedPreferences("JedaPrefs", Context.MODE_PRIVATE)
+                        .getBoolean("isBlockingActive", false)
+                    result.success(isBlocking)
+                }
+
+                "resetDisabledToday" -> {
+                    getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+                        .edit()
+                        .putBoolean("flutter.monitoring_disabled_today", false)
+                        .commit()
+                    Log.d("JedaMain", "✅ monitoring_disabled_today direset (native)")
+                    result.success(null)
                 }
 
                 "enforceBlockIfNecessary" -> {
@@ -57,7 +66,11 @@ class MainActivity : FlutterActivity() {
                     val isSnoozing =
                         System.currentTimeMillis() < prefs.getLong("snoozeUntil", 0L)
 
-                    if (isBlocking && !isSnoozing &&
+                    val overlayAvailable =
+                        Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+                        Settings.canDrawOverlays(this)
+
+                    if (isBlocking && !isSnoozing && !overlayAvailable &&
                         !AppBlockerService.allowedApps.contains(AppBlockerService.currentPackage)
                     ) {
                         val intent = packageManager.getLaunchIntentForPackage(packageName)
@@ -141,26 +154,31 @@ class MainActivity : FlutterActivity() {
                         val launcherIntent = Intent(Intent.ACTION_MAIN, null).apply {
                             addCategory(Intent.CATEGORY_LAUNCHER)
                         }
-                        val launchablePackages = pm
-                            .queryIntentActivities(launcherIntent, 0)
-                            .map { it.activityInfo.packageName }
-                            .toSet()
-
-                        val apps = pm.getInstalledApplications(0)
-                        val list = apps
-                            .filter { info -> launchablePackages.contains(info.packageName) }
-                            .map { info ->
-                                val category = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                    info.category
-                                } else {
-                                    -1
-                                }
+                        // Ambil HANYA aplikasi yang punya launcher (bisa dibuka
+                        // pengguna) langsung dari queryIntentActivities. Dengan
+                        // pendekatan ini, izin QUERY_ALL_PACKAGES tidak diperlukan,
+                        // karena kita tidak lagi memindai seluruh aplikasi terpasang
+                        // melalui getInstalledApplications().
+                        val resolveList = pm.queryIntentActivities(launcherIntent, 0)
+                        val seen = HashSet<String>()
+                        val list = mutableListOf<Map<String, Any>>()
+                        for (ri in resolveList) {
+                            val info = ri.activityInfo.applicationInfo
+                            val pkg = info.packageName
+                            if (!seen.add(pkg)) continue  // hindari duplikat
+                            val category = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                info.category
+                            } else {
+                                -1
+                            }
+                            list.add(
                                 mapOf(
-                                    "packageName" to info.packageName,
+                                    "packageName" to pkg,
                                     "appName" to pm.getApplicationLabel(info).toString(),
                                     "category" to category
                                 )
-                            }
+                            )
+                        }
 
                         runOnUiThread { result.success(list) }
                     }.start()

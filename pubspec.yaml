@@ -20,7 +20,6 @@ dependencies:
   permission_handler: ^11.3.1  # downgrade dari 12.0.1
   flutter_local_notifications: ^17.2.4  # ← downgrade dari 19.5.0
   change_app_package_name: ^1.1.0
-  installed_apps: ^1.4.0
   path_provider: ^2.1.2
   audioplayers: ^6.0.0
   vibration: ^2.0.0

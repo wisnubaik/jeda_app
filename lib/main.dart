@@ -14,6 +14,7 @@ import 'screens/profile/profile_screen.dart';
 import 'screens/profile/edit_profile_screen.dart';
 import 'screens/profile/settings_screen.dart';
 import 'screens/profile/about_screen.dart';
+import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
 
 // ══════════════════════════════════════════════════════════
@@ -40,7 +41,7 @@ void overlayMain() {
       debugShowCheckedModeBanner: false,
       home: Scaffold(
         backgroundColor: Colors.transparent,
-        body: SafeArea(child: JedaOverlayWidget()),
+        body: SizedBox.expand(child: JedaOverlayWidget()),
       ),
     ),
   );
@@ -49,8 +50,13 @@ void overlayMain() {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ✅ FIX: Matikan pengunduhan font dari internet agar tidak error saat offline
-  // Font akan otomatis fallback ke font sistem jika belum di-cache
+  // Tutup overlay yang mungkin masih menggantung dari sesi sebelumnya.
+  try {
+    if (await FlutterOverlayWindow.isActive()) {
+      await FlutterOverlayWindow.closeOverlay();
+    }
+  } catch (_) {}
+
   GoogleFonts.config.allowRuntimeFetching = false;
 
   // ══════════════════════════════════════════════════════════

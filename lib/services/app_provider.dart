@@ -118,6 +118,8 @@ class AppProvider extends ChangeNotifier {
   Map<String, int> get appCategoryMap => _appCategoryMap;
   Timer? _midnightTimer;
   Timer? _pollingTimer;
+  Timer? _monitoringSyncTimer;
+  Timer? _overlayRequestTimer;
 
   bool _isWarningOpen = false;
   Timer? _snoozeTimer;
@@ -204,6 +206,22 @@ class AppProvider extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
 
+    // Reset penanda "monitoring dimatikan hari ini" bila sudah ganti hari.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final today = DateTime.now();
+      final todayStr = '${today.year}-${today.month}-${today.day}';
+      final savedDay = prefs.getString('disabled_day_marker');
+      if (savedDay != todayStr) {
+        await prefs.setBool('monitoring_disabled_today', false);
+        await prefs.setString('disabled_day_marker', todayStr);
+        try {
+          await platform.invokeMethod('resetDisabledToday');
+        } catch (_) {}
+        debugPrint('🔄 Hari baru — reset monitoring_disabled_today.');
+      }
+    } catch (_) {}
+
     // Load _launchablePackages PALING AWAL — _countMissedNotifications
     // dan notification listener bergantung pada ini untuk filter,
     // jika dipanggil belakangan filter akan kosong dan memblokir semua notif.
@@ -258,13 +276,9 @@ class AppProvider extends ChangeNotifier {
     }
 
     _listenOverlayEvents();
-    // Mulai foreground service agar app tetap aktif memantau
-    // di background dan tidak dikill sistem.
-    try {
-      await platform.invokeMethod('startForegroundService');
-    } catch (e) {
-      debugPrint('❌ Gagal start foreground service: $e');
-    }
+
+    // CATATAN: warm-up overlay dihapus karena menyebabkan alarm berbunyi
+    // saat aplikasi baru dibuka (overlay kini membunyikan alarm sendiri).
 
     // ══════════════════════════════════════════════════════════
     // WORKMANAGER — daftarkan task periodik (min. 15 menit, batas
@@ -452,6 +466,37 @@ class AppProvider extends ChangeNotifier {
       _cleanupNotifHashMap();
     });
     debugPrint('✅ Polling timer aktif (interval: 5 menit)');
+
+    // Timer cepat untuk menyinkronkan status monitoring dari native. Jika
+    // monitoring dimatikan lewat overlay (native menulis
+    // monitoring_disabled_today=true), toggle dashboard ikut OFF tanpa perlu
+    // menunggu app di-resume atau polling 5 menit.
+    _monitoringSyncTimer?.cancel();
+    _monitoringSyncTimer =
+        Timer.periodic(const Duration(seconds: 2), (_) async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.reload();
+        final disabled = prefs.getBool('monitoring_disabled_today') ?? false;
+        if (disabled && _isMonitoringEnabled) {
+          _isMonitoringEnabled = false;
+          notifyListeners();
+          debugPrint('🔁 UI: monitoring disinkronkan OFF (dari overlay).');
+        }
+      } catch (_) {}
+    });
+    _overlayRequestTimer?.cancel();
+    _overlayRequestTimer =
+        Timer.periodic(const Duration(milliseconds: 500), (_) async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.reload();
+        if (prefs.getBool('request_show_overlay') ?? false) {
+          await prefs.setBool('request_show_overlay', false);
+          await showJedaOverlay();
+        }
+      } catch (_) {}
+    });
   }
 
   Future<void> fetchUsageData() async {
@@ -858,6 +903,20 @@ class AppProvider extends ChangeNotifier {
   Future<void> onAppResumed() async {
     debugPrint('🔄 App resumed — re-cek permission');
 
+    // Sinkronkan status monitoring dari native. Jika overlay mematikan
+    // monitoring lewat setBlockingStatus(false) saat app di background,
+    // toggle dashboard bisa tertinggal "ON". Baca status native; bila
+    // native menyatakan blocking mati tapi Flutter masih ON, matikan.
+    try {
+      final nativeBlocking =
+          await platform.invokeMethod<bool>('getBlockingStatus') ?? true;
+      if (!nativeBlocking && _isMonitoringEnabled) {
+        _isMonitoringEnabled = false;
+        notifyListeners();
+        debugPrint('🔁 Monitoring disinkronkan OFF dari native (overlay).');
+      }
+    } catch (_) {}
+
     if (!_notifListenerActive) {
       final prefs = await SharedPreferences.getInstance();
       await _initNotificationListener(prefs);
@@ -941,6 +1000,7 @@ class AppProvider extends ChangeNotifier {
   void _listenOverlayEvents() {
     try {
       FlutterOverlayWindow.overlayListener.listen((event) async {
+        debugPrint('🎯 OVERLAY EVENT DITERIMA: $event');
         if (event == null) return;
         final data = event as Map?;
         if (data == null) return;
@@ -967,6 +1027,15 @@ class AppProvider extends ChangeNotifier {
   Future<void> setMonitoring(bool value) async {
     _isMonitoringEnabled = value;
     notifyListeners();
+    // Reset/set penanda "dimatikan hari ini" agar konsisten dengan native.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('monitoring_disabled_today', !value);
+      await prefs.reload();
+      if (value) {
+        debugPrint('✅ Monitoring ON — reset monitoring_disabled_today=false');
+      }
+    } catch (_) {}
     if (!value) {
       await _syncBlockerToNative(false);
       await _notificationsPlugin.cancel(999);
@@ -988,6 +1057,29 @@ class AppProvider extends ChangeNotifier {
       }
     }
   }
+
+  Future<void> showJedaOverlay() async {
+    try {
+      if (await FlutterOverlayWindow.isActive()) return; // hindari dobel
+      final granted = await FlutterOverlayWindow.isPermissionGranted();
+      if (!granted) return;
+      // Tandai peringatan NYATA agar overlay widget boleh membunyikan alarm.
+      final prefsAlarm = await SharedPreferences.getInstance();
+      await prefsAlarm.setBool('overlay_should_alarm', true);
+      await FlutterOverlayWindow.showOverlay(
+        enableDrag: false,
+        overlayTitle: 'Saatnya Jeda',
+        overlayContent: 'Pola penggunaanmu sudah berlebihan',
+        flag: OverlayFlag.defaultFlag,
+        alignment: OverlayAlignment.center,
+        height: WindowSize.matchParent,
+        width: WindowSize.matchParent,
+      );
+    } catch (e) {
+      debugPrint('❌ showJedaOverlay: $e');
+    }
+  }
+
   Future<void> _syncBlockerToNative(bool status) async {
     try {
       await platform.invokeMethod('setBlockingStatus', {'status': status});
@@ -1041,6 +1133,16 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> enforceBlockIfNecessary() async {
+    // Jika izin overlay tersedia, pemblokiran ditangani sepenuhnya oleh
+    // overlay window. Redirect native TIDAK dijalankan agar tidak terjadi
+    // pemblokiran ganda. Redirect hanya fallback saat izin overlay tak ada.
+    try {
+      final overlayGranted = await FlutterOverlayWindow.isPermissionGranted();
+      if (overlayGranted) {
+        debugPrint('⏭️ enforceBlock: overlay aktif, redirect di-skip.');
+        return;
+      }
+    } catch (_) {}
     try {
       await platform.invokeMethod('enforceBlockIfNecessary');
     } catch (e) {
@@ -1062,6 +1164,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> showNotificationAlert() async {
+    debugPrint('🔊 [FLUTTER] showNotificationAlert dipanggil');
     // Guard: jangan tampilkan alert jika monitoring mati, dialog sudah
     // terbuka, atau sedang snooze. Tanpa cek ini, setiap notifikasi yang
     // masuk (WA/IG/dll) bisa memicu alert berulang meski user baru saja
@@ -1114,6 +1217,9 @@ class AppProvider extends ChangeNotifier {
     _addictionProb = 0;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('notif_count', 0);
+    await prefs.setBool('monitoring_disabled_today', false);
+    await prefs.setBool('isBlockingActive_bg', false);
+    _isMonitoringEnabled = true;
     notifyListeners();
   }
 
@@ -1199,6 +1305,16 @@ class AppProvider extends ChangeNotifier {
       _prediction = result['prediction'];
       _addictionProb = result['probability'];
 
+      // ══════════ MODE TESTING — HAPUS SEBELUM RILIS ══════════
+      // Set true untuk MEMAKSA status BAHAYA (uji pop-up/overlay).
+      const bool _forceBahayaForTesting = true;
+      if (_forceBahayaForTesting) {
+        _prediction = 1;
+        _addictionProb = 0.99;
+        debugPrint('⚠️ [TESTING] Status DIPAKSA BAHAYA');
+      }
+      // ═══════════════════════════════════════════════════════
+
       debugPrint('🧠 Prediksi: $_prediction | Prob: $_addictionProb');
       debugPrint('   Input: screen=${_data.dailyScreenTime.toStringAsFixed(2)}j'
           ' | unlocks=${_data.appSessions}'
@@ -1232,18 +1348,35 @@ class AppProvider extends ChangeNotifier {
   void _checkAndShowWarning() async {
     if (_prediction != 1 || !_isMonitoringEnabled || _isWarningOpen) return;
 
-    // Cek snooze dari native (JedaPrefs key: snoozeUntil, tipe Long/ms).
     if (await _isSnoozing()) return;
 
-    // Set guard SEBELUM menampilkan apa pun, agar panggilan beruntun
-    // tidak lolos dan menampilkan alert/dialog berkali-kali.
+    // Jika izin overlay tersedia, peringatan VISUAL ditangani overlay window;
+    // dialog Flutter di-skip. NAMUN suara alarm + getar TETAP dibunyikan agar
+    // pengguna pasti menyadari peringatan meski tidak menatap layar.
+    bool overlayAvailable = false;
+    try {
+      overlayAvailable = await FlutterOverlayWindow.isPermissionGranted();
+    } catch (_) {}
+
     _isWarningOpen = true;
 
-    showNotificationAlert();
-    _showGlobalWarningDialog();
+    if (!overlayAvailable) {
+      // Mode fallback (tanpa overlay): Flutter bunyikan alarm + dialog.
+      showNotificationAlert();
+      _showGlobalWarningDialog();
+    } else {
+      // Mode overlay: alarm dibunyikan oleh overlay widget sendiri.
+      Future.delayed(const Duration(seconds: 3), () {
+        _isWarningOpen = false;
+      });
+    }
   }
 
-  void _showGlobalWarningDialog() {
+  void _showGlobalWarningDialog() async {
+    try {
+      if (await FlutterOverlayWindow.isActive()) return;
+    } catch (_) {}
+
     final ctx = navigatorKey.currentState?.context;
     if (ctx == null) return;
 
