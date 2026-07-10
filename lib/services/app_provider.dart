@@ -10,6 +10,8 @@ import 'package:usage_stats/usage_stats.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
 import 'package:workmanager/workmanager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:vibration/vibration.dart';
 import '../models/usage_data.dart';
 import '../models/naive_bayes_model.dart';
 import 'package:flutter/material.dart';
@@ -122,6 +124,7 @@ class AppProvider extends ChangeNotifier {
   Timer? _overlayRequestTimer;
 
   bool _isWarningOpen = false;
+  bool _isResuming = false; // ← TAMBAH INI
   Timer? _snoozeTimer;
 
   String _alarmSound = 'alarm';
@@ -139,12 +142,36 @@ class AppProvider extends ChangeNotifier {
     'Terlalu lama di layar\nbisa bikin pikiran lelah.\nAmbil napas, dan jeda dulu.',
   ];
 
+  static const List<IconData> motivationIcons = [
+    Icons.wb_sunny_rounded,
+    Icons.self_improvement_rounded,
+    Icons.directions_walk_rounded,
+    Icons.air_rounded,
+  ];
+  static const List<Color> motivationColors = [
+    Color(0xFFF97316),
+    Color(0xFF06B6D4),
+    Color(0xFF22C55E),
+    Color(0xFF6366F1),
+  ];
+
   String getMotivationText() {
+    return motivationTexts[getMotivationIndex()];
+  }
+
+  // Mengembalikan index pesan yang dipakai (0..n-1). Dipakai untuk memilih
+  // logo & warna yang konsisten dengan pilihan di halaman Pengaturan. Untuk
+  // mode acak (variant 0) index dipilih random SEKALI dan disimpan agar teks,
+  // logo, dan warna yang dikirim ke overlay konsisten satu sama lain.
+  int _lastMotivationIndex = 0;
+  int getMotivationIndex() {
     if (_motivationVariant == 0) {
-      return motivationTexts[Random().nextInt(motivationTexts.length)];
+      _lastMotivationIndex = Random().nextInt(motivationTexts.length);
+    } else {
+      _lastMotivationIndex =
+          (_motivationVariant - 1).clamp(0, motivationTexts.length - 1);
     }
-    final idx = (_motivationVariant - 1).clamp(0, motivationTexts.length - 1);
-    return motivationTexts[idx];
+    return _lastMotivationIndex;
   }
 
   final Map<String, String> _logFirstDetectedTime = {};
@@ -154,6 +181,7 @@ class AppProvider extends ChangeNotifier {
 
   final FlutterLocalNotificationsPlugin _notificationsPlugin =
       FlutterLocalNotificationsPlugin();
+  final AudioPlayer _dialogAlarmPlayer = AudioPlayer();
   static const platform = MethodChannel('com.wishnotregret.berijeda/blocker');
 
   final Map<String, DateTime> _notifHashTime = {};
@@ -901,7 +929,9 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> onAppResumed() async {
-    debugPrint('🔄 App resumed — re-cek permission');
+  if (_isResuming) return; // ← TAMBAH INI
+  _isResuming = true;      // ← TAMBAH INI
+  debugPrint('🔄 App resumed — re-cek permission');
 
     // Sinkronkan status monitoring dari native. Jika overlay mematikan
     // monitoring lewat setBlockingStatus(false) saat app di background,
@@ -960,6 +990,7 @@ class AppProvider extends ChangeNotifier {
 
     notifyListeners();
     debugPrint('🔔 notifyListeners dipanggil');
+    _isResuming = false; // ← TAMBAH INI
   }
 
   Future<void> requestPermission() async {
@@ -1027,6 +1058,7 @@ class AppProvider extends ChangeNotifier {
   Future<void> setMonitoring(bool value) async {
     _isMonitoringEnabled = value;
     notifyListeners();
+    if (!value) await _stopDialogAlarm();
     // Reset/set penanda "dimatikan hari ini" agar konsisten dengan native.
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -1068,16 +1100,26 @@ class AppProvider extends ChangeNotifier {
         overlayTitle: 'Saatnya Jeda',
         overlayContent: 'Pola penggunaanmu sudah berlebihan',
         flag: OverlayFlag.defaultFlag,
-        alignment: OverlayAlignment.center,
+        alignment: OverlayAlignment.topLeft,
         height: WindowSize.matchParent,
         width: WindowSize.matchParent,
       );
-      // Kirim sinyal "alarm" ke isolate overlay via shareData (dijamin sampai,
-      // tidak seperti SharedPreferences yang bisa race saat overlay initState
-      // membaca sebelum nilai ter-flush). Overlay yang re-attach saat startup
-      // TIDAK menerima shareData ini sehingga tidak berbunyi.
+      // Kirim SEMUA konfigurasi ke isolate overlay via shareData. Ini memakai
+      // nilai dari AppProvider (isolate utama) yang selalu terbaru, sehingga
+      // menghindari masalah SharedPreferences yang tidak tersinkron antar
+      // isolate (isolate overlay punya cache prefs sendiri). shareData juga
+      // menjadi sinyal bahwa ini peringatan NYATA (bukan re-attach startup),
+      // sehingga alarm hanya berbunyi saat memang dipicu deteksi Bahaya.
       await Future.delayed(const Duration(milliseconds: 200));
-      await FlutterOverlayWindow.shareData({'action': 'alarm'});
+      final msgIndex = getMotivationIndex();
+      await FlutterOverlayWindow.shareData({
+        'action': 'alarm',
+        'sound_enabled': _isSoundEnabled,
+        'alarm_sound': _alarmSound,
+        'vibration_mode': _vibrationMode,
+        'message': motivationTexts[msgIndex],
+        'variant_index': msgIndex,
+      });
     } catch (e) {
       debugPrint('❌ showJedaOverlay: $e');
     }
@@ -1168,51 +1210,52 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> showNotificationAlert() async {
     debugPrint('🔊 [FLUTTER] showNotificationAlert dipanggil');
-    // Guard: jangan tampilkan alert jika monitoring mati, dialog sudah
-    // terbuka, atau sedang snooze. Tanpa cek ini, setiap notifikasi yang
-    // masuk (WA/IG/dll) bisa memicu alert berulang meski user baru saja
-    // menunda peringatan.
+    // TIDAK cek _isWarningOpen di sini (pemanggil sudah set true → alarm tak
+    // akan bunyi bila dicek). Guard monitoring & snooze tetap ada.
     if (!_isMonitoringEnabled) return;
-    if (_isWarningOpen) return;
     if (await _isSnoozing()) return;
+
+    // Alarm memakai audioplayers (bisa dihentikan saat snooze/matikan),
+    // mengikuti nada di Pengaturan.
     try {
-      Int64List? pattern;
-      bool vibrate = true;
-      if (_vibrationMode == 'off') {
-        vibrate = false;
-      } else if (_vibrationMode == 'pendek') {
-        pattern = Int64List.fromList([0, 200, 100, 200]);
-      } else if (_vibrationMode == 'panjang') {
-        pattern = Int64List.fromList([0, 1000, 500, 1000, 500, 1000]);
+      if (_isSoundEnabled) {
+        debugPrint('🔊 [FLUTTER] play: sounds/$_alarmSound.mp3');
+        await _dialogAlarmPlayer.stop();
+        await _dialogAlarmPlayer.setReleaseMode(ReleaseMode.stop);
+        await _dialogAlarmPlayer.setVolume(1.0);
+        await _dialogAlarmPlayer.play(AssetSource('sounds/$_alarmSound.mp3'));
+        debugPrint('🔊 [FLUTTER] play() OK');
       }
-
-      final channelId = 'jeda_alarm_${_alarmSound}_$_vibrationMode';
-
-      await _notificationsPlugin.show(
-        999,
-        '⚠️ SAATNYA JEDA!',
-        'Segera istirahat!',
-        NotificationDetails(
-          android: AndroidNotificationDetails(
-            channelId,
-            'Alarm Jeda Keras',
-            importance: Importance.max,
-            priority: Priority.high,
-            playSound: _isSoundEnabled,
-            sound: _isSoundEnabled
-                ? RawResourceAndroidNotificationSound(_alarmSound)
-                : null,
-            enableVibration: vibrate,
-            vibrationPattern: vibrate ? pattern : null,
-          ),
-        ),
-      );
     } catch (e) {
-      debugPrint('❌ Notif alert: $e');
+      debugPrint('❌ [FLUTTER] play gagal: $e');
+    }
+
+    try {
+      if (_vibrationMode != 'off') {
+        final hasVib = await Vibration.hasVibrator() ?? false;
+        if (hasVib) {
+          if (_vibrationMode == 'panjang') {
+            Vibration.vibrate(pattern: [0, 1000, 500, 1000, 500, 1000]);
+          } else {
+            Vibration.vibrate(pattern: [0, 200, 100, 200]);
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ [FLUTTER] getar gagal: $e');
     }
   }
 
-  Future<void> resetDailyData() async {
+  Future<void> _stopDialogAlarm() async {
+    try {
+      await _dialogAlarmPlayer.stop();
+    } catch (_) {}
+    try {
+      Vibration.cancel();
+    } catch (_) {}
+  }
+
+Future<void> resetDailyData() async {
     _detectionLogs.clear();
     _data = UsageData();
     _logFirstDetectedTime.clear();
@@ -1349,39 +1392,69 @@ class AppProvider extends ChangeNotifier {
   }
 
   void _checkAndShowWarning() async {
-    if (_prediction != 1 || !_isMonitoringEnabled || _isWarningOpen) return;
+  if (_prediction != 1 || !_isMonitoringEnabled || _isWarningOpen) return;
 
-    if (await _isSnoozing()) return;
+  // Kunci LANGSUNG di sini (sebelum await apapun) supaya panggilan lain
+  // yang masuk hampir bersamaan (dari snooze Timer maupun onAppResumed)
+  // langsung ke-block di pengecekan _isWarningOpen di atas.
+  _isWarningOpen = true;
 
-    // Jika izin overlay tersedia, peringatan VISUAL ditangani overlay window;
-    // dialog Flutter di-skip. NAMUN suara alarm + getar TETAP dibunyikan agar
-    // pengguna pasti menyadari peringatan meski tidak menatap layar.
-    bool overlayAvailable = false;
-    try {
-      overlayAvailable = await FlutterOverlayWindow.isPermissionGranted();
-    } catch (_) {}
-
-    _isWarningOpen = true;
-
-    if (!overlayAvailable) {
-      // Mode fallback (tanpa overlay): Flutter bunyikan alarm + dialog.
-      showNotificationAlert();
-      _showGlobalWarningDialog();
-    } else {
-      // Mode overlay: alarm dibunyikan oleh overlay widget sendiri.
-      Future.delayed(const Duration(seconds: 3), () {
-        _isWarningOpen = false;
-      });
+  if (await _isSnoozing()) {
+    _isWarningOpen = false;
+    return;
+  }
+  if (!_hasPermission) {
+    _isWarningOpen = false;
+    return;
+  }
+  try {
+    final accOn = await isAccessibilityEnabled();
+    if (!accOn) {
+      _isWarningOpen = false;
+      return;
     }
+  } catch (_) {
+    _isWarningOpen = false;
+    return;
   }
 
+  bool overlayAvailable = false;
+  try {
+    overlayAvailable = await FlutterOverlayWindow.isPermissionGranted();
+  } catch (_) {}
+
+  if (!overlayAvailable) {
+    showNotificationAlert();
+    _showGlobalWarningDialog();
+  } else {
+    Future.delayed(const Duration(seconds: 3), () {
+      _isWarningOpen = false;
+    });
+  }
+}
+
   void _showGlobalWarningDialog() async {
+    // Guard: jangan spawn dialog baru kalau sudah ada
+  if (navigatorKey.currentState == null) return;
+  if (navigatorKey.currentState!.overlay == null) return;
+
+  // ← TAMBAH INI: cek apakah sudah ada dialog aktif
+  final bool dialogAlreadyShown = navigatorKey.currentState!.overlay!
+      .context
+      .findAncestorWidgetOfExactType<Dialog>() != null;
+  if (dialogAlreadyShown) return;
+
     try {
       if (await FlutterOverlayWindow.isActive()) return;
     } catch (_) {}
 
     final ctx = navigatorKey.currentState?.context;
     if (ctx == null) return;
+
+    final int mIdx = getMotivationIndex();
+    final IconData mIcon = motivationIcons[mIdx];
+    final Color mColor = motivationColors[mIdx];
+    final String mText = motivationTexts[mIdx];
 
     showDialog(
       context: ctx,
@@ -1396,9 +1469,9 @@ class AppProvider extends ChangeNotifier {
             children: [
               Container(
                 padding: const EdgeInsets.all(16),
-                decoration: const BoxDecoration(
-                    color: Color(0xFFF97316), shape: BoxShape.circle),
-                child: const Icon(Icons.wb_sunny_rounded,
+                decoration: BoxDecoration(
+                    color: mColor, shape: BoxShape.circle),
+                child: Icon(mIcon,
                     color: Colors.white, size: 48),
               ),
               const SizedBox(height: 24),
@@ -1406,11 +1479,11 @@ class AppProvider extends ChangeNotifier {
                   style: GoogleFonts.poppins(
                       fontSize: 24,
                       fontWeight: FontWeight.w900,
-                      color: const Color(0xFFF97316),
+                      color: mColor,
                       letterSpacing: 0.5)),
               const SizedBox(height: 16),
               Text(
-                getMotivationText(),
+                mText,
                 textAlign: TextAlign.center,
                 style: GoogleFonts.poppins(
                     fontSize: 14, color: Colors.grey[600], height: 1.5),
@@ -1488,6 +1561,7 @@ class AppProvider extends ChangeNotifier {
 
   Future<void> _applySnooze(BuildContext dialogContext, int seconds) async {
     _isWarningOpen = false;
+    await _stopDialogAlarm();
 
     final ctx = navigatorKey.currentState?.context;
     final messenger = ctx != null ? ScaffoldMessenger.of(ctx) : null;
