@@ -1350,17 +1350,6 @@ Future<void> resetDailyData() async {
       ]);
       _prediction = result['prediction'];
       _addictionProb = result['probability'];
-
-      // ══════════ MODE TESTING — HAPUS SEBELUM RILIS ══════════
-      // Set true untuk MEMAKSA status BAHAYA (uji pop-up/overlay).
-      const bool _forceBahayaForTesting = true;
-      if (_forceBahayaForTesting) {
-        _prediction = 1;
-        _addictionProb = 0.99;
-        debugPrint('⚠️ [TESTING] Status DIPAKSA BAHAYA');
-      }
-      // ═══════════════════════════════════════════════════════
-
       debugPrint('🧠 Prediksi: $_prediction | Prob: $_addictionProb');
       debugPrint('   Input: screen=${_data.dailyScreenTime.toStringAsFixed(2)}j'
           ' | unlocks=${_data.appSessions}'
