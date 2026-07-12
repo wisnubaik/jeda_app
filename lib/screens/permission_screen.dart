@@ -272,12 +272,11 @@ class _PermissionScreenState extends State<PermissionScreen>
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView (
           padding: const EdgeInsets.symmetric(horizontal: 32),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Spacer(),
 
               // ═══════════════════════════════════════════════════════
               // ICON

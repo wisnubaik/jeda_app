@@ -929,25 +929,25 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> onAppResumed() async {
-  if (_isResuming) return;
-  _isResuming = true;
+  if (_isResuming) return; // ← TAMBAH INI
+  _isResuming = true;      // ← TAMBAH INI
   debugPrint('🔄 App resumed — re-cek permission');
 
-  // Sinkronkan status monitoring dari native/overlay — pakai flag yang
-  // SPESIFIK merepresentasikan "user mematikan monitoring", bukan
-  // getBlockingStatus yang ambigu (bisa juga berarti prediksi lagi aman).
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.reload();
-    final disabledByUser = prefs.getBool('monitoring_disabled_today') ?? false;
-    if (disabledByUser && _isMonitoringEnabled) {
-      _isMonitoringEnabled = false;
-      notifyListeners();
-      debugPrint('🔁 Monitoring disinkronkan OFF (user matikan via overlay).');
-    }
-  } catch (_) {}
+    // Sinkronkan status monitoring dari native. Jika overlay mematikan
+    // monitoring lewat setBlockingStatus(false) saat app di background,
+    // toggle dashboard bisa tertinggal "ON". Baca status native; bila
+    // native menyatakan blocking mati tapi Flutter masih ON, matikan.
+    try {
+      final nativeBlocking =
+          await platform.invokeMethod<bool>('getBlockingStatus') ?? true;
+      if (!nativeBlocking && _isMonitoringEnabled) {
+        _isMonitoringEnabled = false;
+        notifyListeners();
+        debugPrint('🔁 Monitoring disinkronkan OFF dari native (overlay).');
+      }
+    } catch (_) {}
 
-  if (!_notifListenerActive) {
+    if (!_notifListenerActive) {
       final prefs = await SharedPreferences.getInstance();
       await _initNotificationListener(prefs);
     }
