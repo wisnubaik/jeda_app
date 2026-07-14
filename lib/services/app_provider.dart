@@ -33,6 +33,17 @@ void callbackDispatcher() {
       final provider = AppProvider();
       await provider._loadAppNames();
 
+      // ═══ TAMBAHAN: muat model Gaussian Naive Bayes di instance
+      // background ini juga. Tanpa ini, _model tetap null selamanya di
+      // isolate WorkManager, dan _runPrediction() diam-diam jatuh ke
+      // fallback kasar (screen_time > 5.0 saja) alih-alih model asli
+      // 3 fitur yang sudah dilatih dan divalidasi. ═══
+      try {
+        provider._model = await NaiveBayesModel.getInstance();
+      } catch (e) {
+        debugPrint('❌ Gagal load model NB di background: $e');
+      }
+
       // Muat notif_count yang sudah tersimpan dari sesi UI sebelumnya,
       // supaya instance AppProvider baru ini tidak mulai dari 0.
       try {
@@ -1101,11 +1112,11 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> onAppResumed() async {
-  if (_isResuming) return; 
-  _isResuming = true;       
+  if (_isResuming) return;
+  _isResuming = true;
   debugPrint('🔄 App resumed — re-cek permission');
 
-     // Sinkronkan status monitoring dari native/overlay — pakai flag yang
+  // Sinkronkan status monitoring dari native/overlay — pakai flag yang
   // SPESIFIK merepresentasikan "user mematikan monitoring", bukan
   // getBlockingStatus yang ambigu (bisa juga berarti prediksi lagi aman).
   try {
