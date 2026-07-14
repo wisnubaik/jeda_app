@@ -96,6 +96,89 @@ void callbackDispatcher() {
   });
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// TAMBAHAN: struktur data & helper untuk merekonstruksi JAM PERSIS
+// kapan suatu threshold (screen time, sosmed, malam) terlampaui,
+// berdasarkan histori event kronologis — bukan waktu evaluasi.
+// ═══════════════════════════════════════════════════════════════════
+class _UsageInterval {
+  final int startMs;
+  final int endMs;
+  final bool isSocial;
+  const _UsageInterval(this.startMs, this.endMs, this.isSocial);
+}
+
+// Mengembalikan sub-interval (start,end) dari overlap sesi [sStart,sEnd]
+// dengan jendela malam — mirror persis logic _intersectWithNight, tapi
+// mengembalikan rentang waktu aktual, bukan cuma total durasi ms.
+List<_UsageInterval> _nightOverlapIntervals(
+  DateTime sStart,
+  DateTime sEnd,
+  DateTime n1Start,
+  DateTime n1End,
+  DateTime n2Start,
+  DateTime now,
+) {
+  final result = <_UsageInterval>[];
+
+  final i1Start = sStart.isAfter(n1Start) ? sStart : n1Start;
+  final i1End = sEnd.isBefore(n1End) ? sEnd : n1End;
+  if (i1Start.isBefore(i1End)) {
+    result.add(_UsageInterval(
+      i1Start.millisecondsSinceEpoch,
+      i1End.millisecondsSinceEpoch,
+      false,
+    ));
+  }
+
+  if (now.isAfter(n2Start)) {
+    final i2Start = sStart.isAfter(n2Start) ? sStart : n2Start;
+    final i2End = sEnd.isBefore(now) ? sEnd : now;
+    if (i2Start.isBefore(i2End)) {
+      result.add(_UsageInterval(
+        i2Start.millisecondsSinceEpoch,
+        i2End.millisecondsSinceEpoch,
+        false,
+      ));
+    }
+  }
+
+  return result;
+}
+
+// Sweep kronologis: urutkan interval berdasarkan waktu mulai, akumulasi
+// durasi, dan cari titik PERSIS kapan akumulasi menembus thresholdHours.
+// Karena penggunaan dalam satu sesi foreground itu kontinu, interpolasi
+// linear di dalam interval yang menembus threshold itu tepat secara
+// matematis, bukan sekadar estimasi kasar.
+DateTime? _findCrossingTime(
+  List<_UsageInterval> intervals,
+  double thresholdHours, {
+  bool socialOnly = false,
+}) {
+  final relevant = socialOnly
+      ? intervals.where((i) => i.isSocial).toList()
+      : List<_UsageInterval>.from(intervals);
+
+  relevant.sort((a, b) => a.startMs.compareTo(b.startMs));
+
+  final thresholdMs = thresholdHours * 3600000;
+  double running = 0;
+
+  for (final interval in relevant) {
+    final duration = (interval.endMs - interval.startMs).toDouble();
+    if (duration <= 0) continue;
+
+    if (running + duration >= thresholdMs) {
+      final crossingMs = interval.startMs + (thresholdMs - running).round();
+      return DateTime.fromMillisecondsSinceEpoch(crossingMs);
+    }
+    running += duration;
+  }
+
+  return null; // Threshold belum tentu terlampaui di data yang tersedia
+}
+
 class AppProvider extends ChangeNotifier {
   UsageData _data = UsageData();
   NaiveBayesModel? _model;
@@ -175,6 +258,9 @@ class AppProvider extends ChangeNotifier {
   }
 
   final Map<String, String> _logFirstDetectedTime = {};
+
+  // ═══ TAMBAHAN: jam AKURAT (hasil rekonstruksi kronologis) per kondisi ═══
+  final Map<String, DateTime> _thresholdCrossingTime = {};
 
   final List<Map<String, dynamic>> _detectionLogs = [];
   List<Map<String, dynamic>> get detectionLogs => _detectionLogs;
@@ -459,6 +545,7 @@ class AppProvider extends ChangeNotifier {
       _notifHashTime.clear();
       _detectionLogs.clear();
       _logFirstDetectedTime.clear();
+      _thresholdCrossingTime.clear(); // ← TAMBAHAN: reset jam akurat hari baru
 
       _data = UsageData(
         dailyScreenTime: 0,
@@ -577,6 +664,9 @@ class AppProvider extends ChangeNotifier {
       final Map<String, double> eventsDuration = {};
       final Set<String> appsWithActivityToday = {};
 
+      // ═══ TAMBAHAN: kumpulkan interval mentah buat sweep kronologis ═══
+      final List<_UsageInterval> screenIntervals = [];
+
       for (final e in allEvents) {
         final et = int.tryParse(e.eventType?.toString() ?? '') ?? -1;
         final pkg = e.packageName ?? '';
@@ -596,6 +686,9 @@ class AppProvider extends ChangeNotifier {
             if (duration > 0 && duration <= 7200000) {
               eventsDuration[pkg] = (eventsDuration[pkg] ?? 0) + duration;
               appsWithActivityToday.add(pkg);
+              // ═ TAMBAHAN ═
+              screenIntervals.add(
+                  _UsageInterval(startMs, tsMs, isSocialMedia(pkg)));
             }
           } else if (tsMs >= startOfDayMs) {
             final screenOffBetween = screenOffTimestamps
@@ -618,6 +711,9 @@ class AppProvider extends ChangeNotifier {
                 appsWithActivityToday.add(pkg);
                 debugPrint(
                     '🌙 Split midnight: $pkg +${(durationToday / 60000).toStringAsFixed(1)}m');
+                // ═ TAMBAHAN ═
+                screenIntervals.add(_UsageInterval(
+                    startOfDayMs, effectiveEnd, isSocialMedia(pkg)));
               }
             }
           }
@@ -638,6 +734,9 @@ class AppProvider extends ChangeNotifier {
           eventsDuration[pkg] =
               (eventsDuration[pkg] ?? 0) + duration.toDouble();
           appsWithActivityToday.add(pkg);
+          // ═ TAMBAHAN ═
+          screenIntervals
+              .add(_UsageInterval(effectiveStart, nowMs, isSocialMedia(pkg)));
         }
       });
 
@@ -702,6 +801,9 @@ class AppProvider extends ChangeNotifier {
       final nightStart2 = DateTime(now.year, now.month, now.day, 22, 0, 0);
       final Map<String, int?> foregroundTimestamp = {};
 
+      // ═══ TAMBAHAN: kumpulkan interval overlap malam buat sweep kronologis ═══
+      final List<_UsageInterval> nightIntervals = [];
+
       for (final e in allEvents) {
         final et = int.tryParse(e.eventType?.toString() ?? '') ?? -1;
         final pkg = e.packageName ?? '';
@@ -724,6 +826,15 @@ class AppProvider extends ChangeNotifier {
               nightStart2,
               now,
             );
+            // ═ TAMBAHAN ═
+            nightIntervals.addAll(_nightOverlapIntervals(
+              DateTime.fromMillisecondsSinceEpoch(startMs),
+              eventTime,
+              nightStart1,
+              nightEnd1,
+              nightStart2,
+              now,
+            ));
             foregroundTimestamp.remove(pkg);
           }
         }
@@ -744,11 +855,42 @@ class AppProvider extends ChangeNotifier {
           nightStart2,
           now,
         );
+        // ═ TAMBAHAN ═
+        nightIntervals.addAll(_nightOverlapIntervals(
+          DateTime.fromMillisecondsSinceEpoch(startMs),
+          effectiveEnd,
+          nightStart1,
+          nightEnd1,
+          nightStart2,
+          now,
+        ));
       });
 
       final screenHours = reconciledTotal / 3600000.0;
       final socialHours = reconciledSocial / 3600000.0;
       final nightUsageHours = nightScreenMs / 3600000.0;
+
+      // ═══════════════════════════════════════════════════════════════
+      // TAMBAHAN: hitung JAM PERSIS kapan tiap threshold terlampaui,
+      // simpan ke _thresholdCrossingTime. Hanya di-set kalau memang
+      // sudah terlampaui HARI INI, dan hanya SEKALI (tidak ditimpa ulang
+      // di re-fetch berikutnya pada hari yang sama).
+      // ═══════════════════════════════════════════════════════════════
+      if (screenHours > 4.0 &&
+          !_thresholdCrossingTime.containsKey('screen_time_tinggi')) {
+        final t = _findCrossingTime(screenIntervals, 4.0);
+        if (t != null) _thresholdCrossingTime['screen_time_tinggi'] = t;
+      }
+      if (socialHours > 5.0 &&
+          !_thresholdCrossingTime.containsKey('sosmed_berlebihan')) {
+        final t = _findCrossingTime(screenIntervals, 5.0, socialOnly: true);
+        if (t != null) _thresholdCrossingTime['sosmed_berlebihan'] = t;
+      }
+      if (nightUsageHours > 2.3 &&
+          !_thresholdCrossingTime.containsKey('penggunaan_malam')) {
+        final t = _findCrossingTime(nightIntervals, 2.3);
+        if (t != null) _thresholdCrossingTime['penggunaan_malam'] = t;
+      }
 
       debugPrint('════════════════════════════════════');
       debugPrint('📊 RINGKASAN USAGE DATA');
@@ -786,13 +928,18 @@ class AppProvider extends ChangeNotifier {
     final timeStr =
         '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
 
-    void addLog(String key, Map<String, dynamic> log) {
+    // ═ TAMBAHAN: format DateTime jadi HH:mm untuk jam akurat ═
+    String formatTime(DateTime dt) =>
+        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+
+    void addLog(String key, Map<String, dynamic> log, {String? timeOverride}) {
       final exists = _detectionLogs.any((l) => l['key'] == key);
       if (!exists) {
+        final resolvedTime = timeOverride ?? timeStr;
         if (!_logFirstDetectedTime.containsKey(key)) {
-          _logFirstDetectedTime[key] = timeStr;
+          _logFirstDetectedTime[key] = resolvedTime;
         }
-        final firstTime = _logFirstDetectedTime[key] ?? timeStr;
+        final firstTime = _logFirstDetectedTime[key] ?? resolvedTime;
         _detectionLogs.add({...log, 'key': key, 'time': firstTime});
       }
     }
@@ -800,6 +947,11 @@ class AppProvider extends ChangeNotifier {
     // ─── LOG 1: Status Model (Kwon et al., 2013 — SAS-SV) ───────────────────
     // Trigger: _prediction == 1 (at risk/addicted berdasarkan SAS-SV)
     // Kwon hanya menghasilkan 2 label (0 = normal, 1 = at risk/addicted).
+    // CATATAN: TETAP pakai waktu evaluasi (timeStr/now), BUKAN jam akurat —
+    // karena ini hasil kombinasi probabilistik 3 fitur sekaligus (Naive
+    // Bayes joint prediction), bukan threshold tunggal pada satu angka
+    // akumulatif, sehingga tidak ada "titik crossing" tunggal yang
+    // well-defined secara matematis untuk direkonstruksi.
     if (_prediction == 1) {
       addLog('status_adiksi', {
         'title': 'Terdeteksi Risiko Adiksi Smartphone',
@@ -823,16 +975,23 @@ class AppProvider extends ChangeNotifier {
     // Khalaida et al. (2025), JATI Vol.9 No.5 — konteks Indonesia.
     // Threshold: Sert, Ünsal, Can (2026) — penggunaan sosmed ≥5 jam/hari
     // dikaitkan dengan skor adiksi lebih tinggi pada remaja SMA (n=858).
+    // Waktu yang dicatat: JAM AKURAT hasil sweep kronologis (bukan waktu
+    // evaluasi), lihat _thresholdCrossingTime & fetchUsageData().
     if (_data.socialMediaUsage > 5.0) {
-      addLog('sosmed_berlebihan', {
-        'title': 'Penggunaan Sosial Media Berlebihan',
-        'desc':
-            'Penggunaan sosial media hari ini melebihi 5 jam. Remaja yang menggunakan sosial media ≥5 jam per hari menunjukkan skor adiksi smartphone yang lebih tinggi.',
-        'color': const Color(0xFFEC4899),
-        'icon': Icons.tag_rounded,
-        'source': 'Sert, Ünsal & Can, 2026 — Journal of Community Health. '
-            'DOI: 10.1007/s10900-026-01578-7',
-      });
+      final crossing = _thresholdCrossingTime['sosmed_berlebihan'];
+      addLog(
+        'sosmed_berlebihan',
+        {
+          'title': 'Penggunaan Sosial Media Berlebihan',
+          'desc':
+              'Penggunaan sosial media hari ini melebihi 5 jam. Remaja yang menggunakan sosial media ≥5 jam per hari menunjukkan skor adiksi smartphone yang lebih tinggi.',
+          'color': const Color(0xFFEC4899),
+          'icon': Icons.tag_rounded,
+          'source': 'Sert, Ünsal & Can, 2026 — Journal of Community Health. '
+              'DOI: 10.1007/s10900-026-01578-7',
+        },
+        timeOverride: crossing != null ? formatTime(crossing) : null,
+      );
     } else {
       _detectionLogs.removeWhere((l) => l['key'] == 'sosmed_berlebihan');
     }
@@ -842,16 +1001,23 @@ class AppProvider extends ChangeNotifier {
     // Landasan: Dai & Ouyang (2026) — screen time ≥4 jam/hari berkaitan dengan
     // risiko lebih tinggi untuk kecemasan (aOR=1.45), depresi (aOR=1.61),
     // masalah perilaku (aOR=1.24), dan ADHD (aOR=1.21) pada anak dan remaja AS.
+    // Waktu yang dicatat: JAM AKURAT hasil sweep kronologis.
     if (_data.dailyScreenTime > 4.0) {
-      addLog('screen_time_tinggi', {
-        'title': 'Screen Time Harian Tinggi',
-        'desc':
-            'Total waktu layar hari ini melebihi 4 jam. Penggunaan layar ≥4 jam per hari berkaitan dengan peningkatan risiko kecemasan, depresi, dan masalah perilaku pada remaja.',
-        'color': const Color(0xFFF97316),
-        'icon': Icons.phonelink_rounded,
-        'source': 'Dai & Ouyang, 2026 — Humanities & Social Sciences Communications. '
-            'DOI: 10.1057/s41599-026-06609-1',
-      });
+      final crossing = _thresholdCrossingTime['screen_time_tinggi'];
+      addLog(
+        'screen_time_tinggi',
+        {
+          'title': 'Screen Time Harian Tinggi',
+          'desc':
+              'Total waktu layar hari ini melebihi 4 jam. Penggunaan layar ≥4 jam per hari berkaitan dengan peningkatan risiko kecemasan, depresi, dan masalah perilaku pada remaja.',
+          'color': const Color(0xFFF97316),
+          'icon': Icons.phonelink_rounded,
+          'source':
+              'Dai & Ouyang, 2026 — Humanities & Social Sciences Communications. '
+                  'DOI: 10.1057/s41599-026-06609-1',
+        },
+        timeOverride: crossing != null ? formatTime(crossing) : null,
+      );
     } else {
       _detectionLogs.removeWhere((l) => l['key'] == 'screen_time_tinggi');
     }
@@ -866,18 +1032,24 @@ class AppProvider extends ChangeNotifier {
     // dikaitkan dengan peningkatan gejala depresi dan performa akademik lebih
     // rendah pada remaja. DOI: 10.24095/hpcdp.42.4.04
     // nightUsage = total durasi pakai HP antara 22:00–05:00 (proxy operasional).
+    // Waktu yang dicatat: JAM AKURAT hasil sweep kronologis.
     if (_data.nightUsage > 2.3) {
-      addLog('penggunaan_malam', {
-        'title': 'Penggunaan Smartphone Malam Hari Tinggi',
-        'desc':
-            'Penggunaan smartphone antara pukul 22:00–05:00 melebihi 2,3 jam. Durasi ini di atas rata-rata remaja dan berkaitan dengan kualitas tidur buruk serta peningkatan risiko depresi.',
-        'color': const Color(0xFF6366F1),
-        'icon': Icons.nightlight_rounded,
-        'source': 'Bozkurt et al., 2024 — Eurasian Journal of Medicine. '
-            'DOI: 10.5152/eurasianjmed.2024.23379 | '
-            'Dutil et al., 2022 — Health Promot. Chronic Dis. Prev. Can. '
-            'DOI: 10.24095/hpcdp.42.4.04',
-      });
+      final crossing = _thresholdCrossingTime['penggunaan_malam'];
+      addLog(
+        'penggunaan_malam',
+        {
+          'title': 'Penggunaan Smartphone Malam Hari Tinggi',
+          'desc':
+              'Penggunaan smartphone antara pukul 22:00–05:00 melebihi 2,3 jam. Durasi ini di atas rata-rata remaja dan berkaitan dengan kualitas tidur buruk serta peningkatan risiko depresi.',
+          'color': const Color(0xFF6366F1),
+          'icon': Icons.nightlight_rounded,
+          'source': 'Bozkurt et al., 2024 — Eurasian Journal of Medicine. '
+              'DOI: 10.5152/eurasianjmed.2024.23379 | '
+              'Dutil et al., 2022 — Health Promot. Chronic Dis. Prev. Can. '
+              'DOI: 10.24095/hpcdp.42.4.04',
+        },
+        timeOverride: crossing != null ? formatTime(crossing) : null,
+      );
     } else {
       _detectionLogs.removeWhere((l) => l['key'] == 'penggunaan_malam');
     }
@@ -929,23 +1101,23 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<void> onAppResumed() async {
-  if (_isResuming) return; // ← TAMBAH INI
-  _isResuming = true;      // ← TAMBAH INI
+  if (_isResuming) return; 
+  _isResuming = true;       
   debugPrint('🔄 App resumed — re-cek permission');
 
-    // Sinkronkan status monitoring dari native. Jika overlay mematikan
-    // monitoring lewat setBlockingStatus(false) saat app di background,
-    // toggle dashboard bisa tertinggal "ON". Baca status native; bila
-    // native menyatakan blocking mati tapi Flutter masih ON, matikan.
-    try {
-      final nativeBlocking =
-          await platform.invokeMethod<bool>('getBlockingStatus') ?? true;
-      if (!nativeBlocking && _isMonitoringEnabled) {
-        _isMonitoringEnabled = false;
-        notifyListeners();
-        debugPrint('🔁 Monitoring disinkronkan OFF dari native (overlay).');
-      }
-    } catch (_) {}
+     // Sinkronkan status monitoring dari native/overlay — pakai flag yang
+  // SPESIFIK merepresentasikan "user mematikan monitoring", bukan
+  // getBlockingStatus yang ambigu (bisa juga berarti prediksi lagi aman).
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final disabledByUser = prefs.getBool('monitoring_disabled_today') ?? false;
+    if (disabledByUser && _isMonitoringEnabled) {
+      _isMonitoringEnabled = false;
+      notifyListeners();
+      debugPrint('🔁 Monitoring disinkronkan OFF (user matikan via overlay).');
+    }
+  } catch (_) {}
 
     if (!_notifListenerActive) {
       final prefs = await SharedPreferences.getInstance();
@@ -1259,6 +1431,7 @@ Future<void> resetDailyData() async {
     _detectionLogs.clear();
     _data = UsageData();
     _logFirstDetectedTime.clear();
+    _thresholdCrossingTime.clear(); // ← TAMBAHAN: reset jam akurat
     _prediction = 0;
     _addictionProb = 0;
     final prefs = await SharedPreferences.getInstance();
