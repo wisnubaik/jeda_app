@@ -157,6 +157,13 @@ class _JedaOverlayWidgetState extends State<JedaOverlayWidget> {
     final maxCardHeight =
         isLandscape ? referenceWidth - 64 : mediaSize.height * 0.9;
 
+    // Lebar konten di dalam kartu (di luar padding horizontal 24 kiri+kanan).
+    // Dipakai untuk tombol menggantikan `double.infinity`, karena FittedBox
+    // di bawah butuh constraint yang bounded (tidak boleh infinity).
+    const double cardPaddingH = 24.0;
+    const double cardPaddingV = 32.0;
+    final contentWidth = (referenceWidth - 64) - (cardPaddingH * 2);
+
     // Posisi kartu digeser sedikit ke bawah dari tengah (faktor 0.3) untuk
     // mengimbangi window overlay yang pada sebagian ROM tidak setinggi layar
     // penuh sehingga Center murni tampak agak ke atas. Nilai 0.3 dipilih agar
@@ -167,34 +174,29 @@ class _JedaOverlayWidgetState extends State<JedaOverlayWidget> {
     // dalamnya: lebar kartu selalu konsisten kedua orientasi, dan tinggi
     // dijamin tidak pernah melebihi layar di kedua orientasi — kalau konten
     // tak muat, otomatis bisa di-scroll, bukan overflow/cacat.
+    // ═══ TAMBAHAN: posisi vertikal ═══
+    // Digeser ke bawah tengah (0.5) baik potret maupun lanskap — kalibrasi
+    // lama untuk kompensasi window overlay yang di sebagian ROM tidak
+    // menutupi layar penuh (lihat solusi MethodChannel status bar height).
+    final verticalAlign = 0.5;
+
     return Material(
       color: Colors.transparent,
       child: SizedBox.expand(
         child: Align(
-          alignment: const Alignment(0, 0.5),
+          alignment: Alignment(0, verticalAlign),
           child: ConstrainedBox(
             constraints: BoxConstraints(
               maxWidth: referenceWidth - 64,
               maxHeight: maxCardHeight,
             ),
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(32),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.25),
-                    blurRadius: 30,
-                    spreadRadius: 2,
-                  ),
-                ],
-              ),
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 24.0, vertical: 32.0),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
+            child: (() {
+              // ═══ TAMBAHAN: konten kartu dipisah jadi widget tersendiri
+              // supaya bisa dirender dengan 2 cara berbeda tergantung
+              // orientasi (lihat di bawah). ═══
+              final cardContent = Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -217,7 +219,7 @@ class _JedaOverlayWidgetState extends State<JedaOverlayWidget> {
                     ),
                     const SizedBox(height: 32),
                     SizedBox(
-                      width: double.infinity,
+                      width: contentWidth,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFFF59E0B),
@@ -234,7 +236,7 @@ class _JedaOverlayWidgetState extends State<JedaOverlayWidget> {
                     ),
                     const SizedBox(height: 12),
                     SizedBox(
-                      width: double.infinity,
+                      width: contentWidth,
                       child: OutlinedButton(
                         style: OutlinedButton.styleFrom(
                             foregroundColor: const Color(0xFF1A1A2E),
@@ -270,10 +272,82 @@ class _JedaOverlayWidgetState extends State<JedaOverlayWidget> {
                         ),
                       ),
                     ),
+                ],
+              );
+
+              // ═══ TAMBAHAN: cara render konten beda per orientasi ═══
+              // Potret: ruang vertikal sudah cukup luas → tetap pakai
+              // SingleChildScrollView (natural size, scroll cuma jaring
+              // pengaman untuk kasus ekstrem).
+              // Lanskap: ruang vertikal terbatas (maxCardHeight = lebar
+              // potret device) → kartu dipatok ke ukuran PASTI
+              // (referenceWidth-64 x maxCardHeight), lalu seluruh konten
+              // di-scale proporsional pakai FittedBox(scaleDown) supaya
+              // MUAT PENUH dan TERLIHAT SEKALIGUS tanpa perlu scroll —
+              // ikon, judul, teks, dan tombol ikut mengecil bersama secara
+              // proporsional, bukan terpotong.
+              if (isLandscape) {
+                // Batas ruang di DALAM padding kartu (24 kiri+kanan,
+                // 32 atas+bawah), tempat cardContent akan di-scale.
+                final innerMaxWidth =
+                    (referenceWidth - 64) - (cardPaddingH * 2);
+                final innerMaxHeight = maxCardHeight - (cardPaddingV * 2);
+                return Container(
+                  // ═══ TAMBAHAN: TIDAK ada width/height tetap di sini lagi.
+                  // Sebelumnya Container dipaksa selebar referenceWidth-64,
+                  // padahal FittedBox men-scale konten secara UNIFORM
+                  // berdasarkan sisi paling ketat (tinggi, karena konten
+                  // aslinya tinggi/portrait-shaped). Hasilnya lebar konten
+                  // yang sudah di-scale jadi LEBIH SEMPIT dari kotak yang
+                  // dipaksa lebar itu → muncul spasi putih kosong di
+                  // kiri-kanan. Dengan menghilangkan width/height tetap,
+                  // Container membungkus (shrink-wrap) PERSIS sebesar hasil
+                  // scale konten + padding — tidak ada sisa ruang lagi. ═══
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(32),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.25),
+                        blurRadius: 30,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: cardPaddingH, vertical: cardPaddingV),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: innerMaxWidth,
+                      maxHeight: innerMaxHeight,
+                    ),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: cardContent,
+                    ),
+                  ),
+                );
+              }
+
+              return Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(32),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.25),
+                      blurRadius: 30,
+                      spreadRadius: 2,
+                    ),
                   ],
                 ),
-              ),
-            ),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: cardPaddingH, vertical: cardPaddingV),
+                  child: cardContent,
+                ),
+              );
+            })(),
           ),
         ),
       ),
