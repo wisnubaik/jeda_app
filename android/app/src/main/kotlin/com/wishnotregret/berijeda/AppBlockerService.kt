@@ -9,6 +9,9 @@ import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import io.flutter.embedding.engine.FlutterEngineCache
+import io.flutter.plugin.common.BasicMessageChannel
+import io.flutter.plugin.common.JSONMessageCodec
 
 class AppBlockerService : AccessibilityService() {
 
@@ -23,6 +26,16 @@ class AppBlockerService : AccessibilityService() {
             "com.transsion.hilauncher",
             "com.android.settings",
         )
+
+        // ═══ TAMBAHAN: konstanta plugin flutter_overlay_window, disalin
+        // persis dari OverlayConstants.java milik plugin (package berbeda,
+        // jadi field itu tidak bisa diakses langsung — nilainya disalin
+        // manual di sini). Kalau plugin di-upgrade dan konstanta ini
+        // berubah, nilai di sini perlu disesuaikan juga. ═══
+        private const val OVERLAY_ENGINE_CACHE_TAG = "myCachedEngine"
+        private const val OVERLAY_MESSENGER_TAG = "x-slayer/overlay_messenger"
+        private const val OVERLAY_SERVICE_CLASS =
+            "flutter.overlay.window.flutter_overlay_window.OverlayService"
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -164,8 +177,11 @@ class AppBlockerService : AccessibilityService() {
         // TIDAK PERNAH redirect. Redirect hanya fallback bila izin overlay
         // benar-benar tidak tersedia.
         if (Settings.canDrawOverlays(applicationContext)) {
-            tryShowFlutterOverlay()
-            Log.d("JedaBlocker", "📤 Minta Dart tampilkan overlay (flag-based v2)")
+            // ═══ UBAH: dari tryShowFlutterOverlay() (flag-based, butuh Dart
+            // isolate utama hidup buat dieksekusi) jadi showOverlayDirectly()
+            // (native langsung start OverlayService + kirim data alarm lewat
+            // message channel, tidak bergantung MainActivity/Dart utama). ═══
+            showOverlayDirectly()
         } else {
             Log.w("JedaBlocker", "⚠️ Izin overlay tidak ada — fallback redirect")
             val launchIntent = packageManager
@@ -193,35 +209,112 @@ class AppBlockerService : AccessibilityService() {
             pkg.contains("launcher") || pkg.contains("home")
         }
     }
+
     // Menandai waktu terakhir overlay ditampilkan agar tidak spawn ulang
     // tiap siklus deteksi (mencegah "hilang lalu muncul lagi").
     private var overlayShownAt = 0L
     private val OVERLAY_REFRESH_MS = 60_000L
 
-    private fun tryShowFlutterOverlay(): Boolean {
+    // ═══════════════════════════════════════════════════════════════════
+    // TAMBAHAN: start OverlayService langsung dari native (Kotlin), tanpa
+    // bergantung pada Dart isolate utama (MainActivity) hidup. Berbeda dari
+    // tryShowFlutterOverlay() versi lama yang cuma menulis flag
+    // "request_show_overlay" ke SharedPreferences — flag itu HANYA dibaca
+    // oleh _overlayRequestTimer di AppProvider, yang cuma ada kalau
+    // initialize() sempat dipanggil (app masih hidup / belum di-kill).
+    //
+    // Cara kerja versi baru ini:
+    // 1. Panggil startService(OverlayService) langsung. OverlayService.
+    //    onCreate() (di plugin flutter_overlay_window) akan membuat
+    //    FlutterEngine baru sendiri via FlutterEngineGroup + entrypoint
+    //    "overlayMain" JIKA belum ada engine yang di-cache — artinya ini
+    //    TIDAK butuh MainActivity pernah dibuka sejak proses ini hidup.
+    // 2. Setelah beri jeda agar engine siap, kirim data alarm (pesan,
+    //    sound, vibrasi) langsung lewat BasicMessageChannel ke engine
+    //    overlay itu — meniru persis apa yang biasanya dikirim
+    //    AppProvider.showJedaOverlay() lewat FlutterOverlayWindow.shareData().
+    // ═══════════════════════════════════════════════════════════════════
+    private fun showOverlayDirectly() {
         if (!Settings.canDrawOverlays(applicationContext)) {
             Log.w("JedaBlocker", "Izin overlay belum diberikan")
-            return false
+            return
         }
+
         // Jika overlay baru saja ditampilkan dan belum kedaluwarsa, jangan
-        // spawn lagi (mencegah flicker).
+        // spawn lagi (mencegah flicker/restart berulang).
         val now = System.currentTimeMillis()
         if (now - overlayShownAt < OVERLAY_REFRESH_MS) {
-            return true
+            Log.d("JedaBlocker", "⏭️ Overlay masih dalam masa refresh, skip spawn ulang")
+            return
         }
-        return try {
-            // Tulis flag agar Dart menampilkan overlay lewat API resmi
-            // (showOverlay). Reflection startService me-reuse isolate lama
-            // sehingga initState + alarm tidak jalan.
-            val fp = applicationContext.getSharedPreferences(
+
+        try {
+            val serviceClass = Class.forName(OVERLAY_SERVICE_CLASS)
+            val intent = Intent(applicationContext, serviceClass)
+            intent.putExtra("startX", -6)
+            intent.putExtra("startY", -6)
+            applicationContext.startService(intent)
+            overlayShownAt = now
+            Log.d("JedaBlocker", "📤 OverlayService di-start langsung dari native")
+        } catch (e: Exception) {
+            Log.e("JedaBlocker", "❌ Gagal start OverlayService: ${e.message}")
+            return
+        }
+
+        // Beri jeda agar FlutterEngine (baru atau lama) benar-benar siap
+        // sebelum kirim data alarm — meniru delay 200ms yang sudah ada di
+        // showJedaOverlay() versi Dart untuk alasan yang sama.
+        handler.postDelayed({
+            sendAlarmDataToOverlay()
+        }, 500)
+    }
+
+    private fun sendAlarmDataToOverlay() {
+        try {
+            val engine = FlutterEngineCache.getInstance().get(OVERLAY_ENGINE_CACHE_TAG)
+            if (engine == null) {
+                Log.e("JedaBlocker", "❌ Engine overlay belum siap, alarm dilewati")
+                return
+            }
+
+            val channel = BasicMessageChannel(
+                engine.dartExecutor,
+                OVERLAY_MESSENGER_TAG,
+                JSONMessageCodec.INSTANCE
+            )
+
+            val flutterPrefs = applicationContext.getSharedPreferences(
                 "FlutterSharedPreferences", Context.MODE_PRIVATE
             )
-            fp.edit().putBoolean("flutter.request_show_overlay", true).commit()
-            overlayShownAt = now
-            true
+
+            // Baca preferensi yang sama seperti yang dipakai AppProvider,
+            // supaya perilaku alarm (sound/vibrasi) tetap konsisten dengan
+            // pengaturan pengguna, meski dipicu dari native.
+            val soundEnabled = flutterPrefs.getBoolean("flutter.sound_enabled", true)
+            val alarmSound = flutterPrefs.getString("flutter.alarm_sound", "alarm") ?: "alarm"
+            val vibrationMode = flutterPrefs.getString("flutter.vibration_mode", "pendek") ?: "pendek"
+
+            // CATATAN: pesan motivasi & index warna/ikon di-hardcode ke
+            // varian pertama di sini, karena logic randomisasi
+            // (getMotivationIndex() di AppProvider) tidak direplikasi di
+            // native untuk menjaga perubahan tetap minimal. Konsekuensinya:
+            // saat overlay dipicu murni dari native (app di-kill total),
+            // pesan yang tampil selalu varian pertama, bukan hasil
+            // rotasi/pilihan acak seperti biasanya. Ini keterbatasan yang
+            // diketahui, bukan bug.
+            val payload = mapOf(
+                "action" to "alarm",
+                "sound_enabled" to soundEnabled,
+                "alarm_sound" to alarmSound,
+                "vibration_mode" to vibrationMode,
+                "message" to "Pola penggunaanmu sudah\nberlebihan.\nMata dan pikiranmu butuh\nistirahat.",
+                "variant_index" to 0
+            )
+
+            channel.send(payload)
+            Log.d("JedaBlocker", "📤 Data alarm dikirim langsung ke overlay engine (native)")
         } catch (e: Exception) {
-            Log.e("JedaBlocker", "Gagal set flag overlay: ${e.message}")
-            false
+            Log.e("JedaBlocker", "❌ Gagal kirim data alarm ke overlay: ${e.message}")
         }
     }
 
