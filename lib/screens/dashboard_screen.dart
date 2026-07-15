@@ -30,16 +30,20 @@ class _DashboardScreenState extends State<DashboardScreen>
     _loadUser();
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      _provider = context.read<AppProvider>();
-      await _provider!.initialize();
+  _provider = context.read<AppProvider>();
+  await _provider!.initialize();
 
-      if (mounted) setState(() => _lastUpdated = DateTime.now());
+  if (mounted) setState(() => _lastUpdated = DateTime.now());
 
-      bool isAccEnabled = await _provider!.isAccessibilityEnabled();
-      if (!isAccEnabled && mounted) _showAccessibilityDialog();
-      // ⬇️ DIHAPUS: _checkAndShowWarning() — sekarang dipanggil otomatis
-      // oleh AppProvider setiap kali _runPrediction() selesai.
-    });
+  // Delay kecil supaya AccessibilityManager sistem sempat sinkron
+  // setelah user baru saja mengaktifkan izin dari Settings.
+  await Future.delayed(const Duration(milliseconds: 500));
+  if (!mounted) return;
+
+  bool isAccEnabled = await _provider!.isAccessibilityEnabled();
+  bool isOverlayEnabled = await _provider!.isOverlayPermissionGranted();
+  if ((!isAccEnabled || !isOverlayEnabled) && mounted) _showAccessibilityDialog();
+});
 
     _timer = Timer.periodic(const Duration(minutes: 1), (_) async {
       if (!mounted || _provider == null) return;
@@ -132,12 +136,19 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Future<void> _checkAccessibility() async {
-    if (_accDialogOpen || _provider == null) return;
-    final enabled = await _provider!.isAccessibilityEnabled();
-    if (!enabled && mounted) {
-      _showAccessibilityDialog();
-    }
+  if (_accDialogOpen || _provider == null) return;
+
+  // Delay kecil supaya AccessibilityManager sistem sempat sinkron
+  // setelah app resume dari Settings.
+  await Future.delayed(const Duration(milliseconds: 500));
+  if (!mounted) return;
+
+  final accEnabled = await _provider!.isAccessibilityEnabled();
+  final overlayEnabled = await _provider!.isOverlayPermissionGranted();
+  if ((!accEnabled || !overlayEnabled) && mounted) {
+    _showAccessibilityDialog();
   }
+}
 
   String _greeting() {
     final hour = DateTime.now().hour;
