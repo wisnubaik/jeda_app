@@ -1543,6 +1543,16 @@ Future<void> resetDailyData() async {
       _addictionProb = _prediction == 1 ? 0.88 : 0.15;
     }
 
+    // ══════════ MODE TESTING — HAPUS SEBELUM RILIS ══════════
+      // Set true untuk MEMAKSA status BAHAYA (uji pop-up/overlay).
+      const bool _forceBahayaForTesting = true;
+      if (_forceBahayaForTesting) {
+        _prediction = 1;
+        _addictionProb = 0.99;
+        debugPrint('⚠️ [TESTING] Status DIPAKSA BAHAYA');
+      }
+      // ═══════════════════════════════════════════════════════
+
     _generateDetectionLogs();
 
     if (_prediction == 1 && _isMonitoringEnabled) {

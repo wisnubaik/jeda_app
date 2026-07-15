@@ -36,6 +36,17 @@ class AppBlockerService : AccessibilityService() {
         private const val OVERLAY_MESSENGER_TAG = "x-slayer/overlay_messenger"
         private const val OVERLAY_SERVICE_CLASS =
             "flutter.overlay.window.flutter_overlay_window.OverlayService"
+
+        // ═══ TAMBAHAN: salinan persis motivationTexts dari AppProvider
+        // (app_provider.dart). Kalau daftar pesan itu diedit di Dart,
+        // daftar ini WAJIB disinkronkan manual juga — tidak ada mekanisme
+        // otomatis yang menjaga keduanya tetap sama karena beda bahasa. ═══
+        private val MOTIVATION_TEXTS = listOf(
+            "Pola penggunaanmu sudah\nberlebihan.\nMata dan pikiranmu butuh\nistirahat.",
+            "Sudah waktunya istirahat.\nBeri matamu kesempatan\nuntuk rileks sejenak.",
+            "Tubuhmu butuh gerak.\nYuk, bangun dan\nregangkan badan dulu.",
+            "Terlalu lama di layar\nbisa bikin pikiran lelah.\nAmbil napas, dan jeda dulu."
+        )
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -294,21 +305,38 @@ class AppBlockerService : AccessibilityService() {
             val alarmSound = flutterPrefs.getString("flutter.alarm_sound", "alarm") ?: "alarm"
             val vibrationMode = flutterPrefs.getString("flutter.vibration_mode", "pendek") ?: "pendek"
 
-            // CATATAN: pesan motivasi & index warna/ikon di-hardcode ke
-            // varian pertama di sini, karena logic randomisasi
-            // (getMotivationIndex() di AppProvider) tidak direplikasi di
-            // native untuk menjaga perubahan tetap minimal. Konsekuensinya:
-            // saat overlay dipicu murni dari native (app di-kill total),
-            // pesan yang tampil selalu varian pertama, bukan hasil
-            // rotasi/pilihan acak seperti biasanya. Ini keterbatasan yang
-            // diketahui, bukan bug.
+            // ═══ TAMBAHAN: replikasi persis logic getMotivationIndex() di
+            // AppProvider (app_provider.dart) — kalau motivation_variant
+            // tersimpan = 0 (mode "acak"), pilih index random 0..3; kalau
+            // bukan 0 (user pilih pesan tertentu di Pengaturan), pakai
+            // (variant - 1) di-clamp ke rentang valid. Dengan ini pesan
+            // yang tampil dari trigger native tetap konsisten dengan
+            // preferensi pengguna & tetap random kalau mode acak dipilih.
+            //
+            // CATATAN PENTING: dibaca pakai getLong(), BUKAN getInt().
+            // Plugin shared_preferences Flutter selalu menyimpan nilai
+            // int dari Dart sebagai Long di SharedPreferences native
+            // (pakai putLong() di balik layar, untuk menghindari masalah
+            // presisi 64-bit Dart int vs 32-bit Java int). Baca pakai
+            // getInt() menyebabkan ClassCastException
+            // (java.lang.Long cannot be cast to java.lang.Integer) begitu
+            // value-nya benar-benar pernah ditulis (bukan default). ═══
+            val motivationVariant =
+                flutterPrefs.getLong("flutter.motivation_variant", 0L).toInt()
+            val motivationIndex = if (motivationVariant == 0) {
+                (0 until MOTIVATION_TEXTS.size).random()
+            } else {
+                (motivationVariant - 1).coerceIn(0, MOTIVATION_TEXTS.size - 1)
+            }
+            val motivationMessage = MOTIVATION_TEXTS[motivationIndex]
+
             val payload = mapOf(
                 "action" to "alarm",
                 "sound_enabled" to soundEnabled,
                 "alarm_sound" to alarmSound,
                 "vibration_mode" to vibrationMode,
-                "message" to "Pola penggunaanmu sudah\nberlebihan.\nMata dan pikiranmu butuh\nistirahat.",
-                "variant_index" to 0
+                "message" to motivationMessage,
+                "variant_index" to motivationIndex
             )
 
             channel.send(payload)
