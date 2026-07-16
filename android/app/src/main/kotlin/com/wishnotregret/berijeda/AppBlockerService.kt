@@ -118,6 +118,7 @@ class AppBlockerService : AccessibilityService() {
                 .putBoolean("flutter.monitoring_disabled_today", true)
                 .apply()
             overlayShownAt = 0L
+            isOverlayActive = false
             Log.d("JedaBlocker", "🛑 Monitoring dimatikan dari overlay")
             return
         }
@@ -147,6 +148,7 @@ class AppBlockerService : AccessibilityService() {
                 .putBoolean("flutter.overlay_snoozeLong", false)
                 .apply()
             overlayShownAt = 0L
+            isOverlayActive = false
             Log.d("JedaBlocker", "😴 Snooze dari overlay: $secs detik")
             return
         }
@@ -226,6 +228,13 @@ class AppBlockerService : AccessibilityService() {
     private var overlayShownAt = 0L
     private val OVERLAY_REFRESH_MS = 60_000L
 
+    // ═══ TAMBAHAN: true selama overlay window benar-benar masih nempel di
+    // layar (belum pernah di-close oleh snooze/disableMonitoring). Dipakai
+    // showOverlayDirectly() untuk membedakan "overlay masih ada, cukup
+    // refresh datanya tanpa bongkar window" vs "overlay belum ada, harus
+    // start service baru". ═══
+    private var isOverlayActive = false
+
     // ═══════════════════════════════════════════════════════════════════
     // TAMBAHAN: start OverlayService langsung dari native (Kotlin), tanpa
     // bergantung pada Dart isolate utama (MainActivity) hidup. Berbeda dari
@@ -254,8 +263,28 @@ class AppBlockerService : AccessibilityService() {
         // Jika overlay baru saja ditampilkan dan belum kedaluwarsa, jangan
         // spawn lagi (mencegah flicker/restart berulang).
         val now = System.currentTimeMillis()
-        if (now - overlayShownAt < OVERLAY_REFRESH_MS) {
-            Log.d("JedaBlocker", "⏭️ Overlay masih dalam masa refresh, skip spawn ulang")
+
+        // ═══ UBAH: sebelumnya blok ini SELALU lanjut ke startService() lagi
+        // begitu OVERLAY_REFRESH_MS (60 detik) habis, walau overlay yang
+        // lama masih nempel di layar. startService() ke overlay yang sudah
+        // aktif membuat plugin flutter_overlay_window DESTROY window lama
+        // lalu bikin window baru dari nol — kelihatan sebagai "hilang
+        // sebentar lalu muncul lagi" tiap ~60 detik meski user diam saja.
+        //
+        // Sekarang: kalau overlay MASIH aktif (isOverlayActive = true),
+        // startService() TIDAK PERNAH dipanggil lagi selama overlay itu
+        // belum ditutup user (snooze / matikan monitoring — lihat
+        // isOverlayActive = false di checkAndBlock()). Yang terjadi cuma
+        // kirim ULANG data alarm (pesan/sound/vibrasi) ke window yang SAMA
+        // setiap OVERLAY_REFRESH_MS, tanpa window-nya ikut dibongkar. ═══
+        if (isOverlayActive) {
+            if (now - overlayShownAt < OVERLAY_REFRESH_MS) {
+                Log.d("JedaBlocker", "⏭️ Overlay masih dalam masa refresh, skip spawn ulang")
+                return
+            }
+            overlayShownAt = now
+            Log.d("JedaBlocker", "🔄 Overlay masih aktif, refresh data alarm (window tidak dibongkar)")
+            sendAlarmDataToOverlay()
             return
         }
 
@@ -266,6 +295,7 @@ class AppBlockerService : AccessibilityService() {
             intent.putExtra("startY", -6)
             applicationContext.startService(intent)
             overlayShownAt = now
+            isOverlayActive = true
             Log.d("JedaBlocker", "📤 OverlayService di-start langsung dari native")
         } catch (e: Exception) {
             Log.e("JedaBlocker", "❌ Gagal start OverlayService: ${e.message}")
